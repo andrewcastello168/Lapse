@@ -1,0 +1,4 @@
+allowBuilds:
+  argon2: false
+minimumReleaseAgeExclude:
+  - '@nestjs/observe@0.3.0'

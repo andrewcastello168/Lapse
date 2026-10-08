@@ -10,8 +10,7 @@ export class CategoriesService {
   ) {}
   async findAll() {
     return this.db('master_categories')
-      .select('master_id', 'master_category_name')
-      .where('master_is_active', true)
-      .orderBy('master_category_name');
+      .select('id', 'name')
+      .where('is_active', true);
   }
 }

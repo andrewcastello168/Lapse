@@ -5,6 +5,9 @@ import { AppService } from './app.service.js';
 import { DatabaseModule } from './database/database.module.js';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CategoriesModule } from './categories/categories.module.js';
+import { ItemsModule } from './items/items.module.js';
+import { AuthController } from './auth/auth.controller.js';
+import { AuthModule } from './auth/auth.module.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
@@ -25,6 +28,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     }),
     DatabaseModule,
     CategoriesModule,
+    ItemsModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

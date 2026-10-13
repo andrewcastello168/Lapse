@@ -1,12 +1,16 @@
-import { Controller, Get, Param } from '@nestjs/common';
-import { ItemsService } from './items.service.js';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 
-@Controller('categories')
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
+import { ItemsService } from './items.service.js';
+import { QueryItemsDto } from './dto/query-items.dto.js';
+
+@Controller('items')
+@UseGuards(JwtAuthGuard)
 export class ItemsController {
   constructor(private readonly itemsService: ItemsService) {}
 
-  @Get(':categoryId/items')
-  findByCategory(@Param('categoryId') categoryId: string) {
-    return this.itemsService.findByCategory(categoryId);
+  @Get()
+  findAll(@Query() query: QueryItemsDto) {
+    return this.itemsService.findAll(query);
   }
 }

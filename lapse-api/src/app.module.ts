@@ -8,6 +8,8 @@ import { CategoriesModule } from './categories/categories.module.js';
 import { ItemsModule } from './items/items.module.js';
 import { AuthController } from './auth/auth.controller.js';
 import { AuthModule } from './auth/auth.module.js';
+import { UserItemsModule } from './user-items/user-items.module.js';
+import { TimelineModule } from './timeline/timeline.module.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
@@ -30,6 +32,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     CategoriesModule,
     ItemsModule,
     AuthModule,
+    UserItemsModule,
+    TimelineModule,
   ],
   controllers: [AppController],
   providers: [AppService],

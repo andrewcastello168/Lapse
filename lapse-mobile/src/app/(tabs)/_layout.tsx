@@ -1,67 +1,111 @@
 import { Tabs } from "expo-router";
-import { Platform } from "react-native";
-import { House, Plus, Layers, UserRound } from "lucide-react-native";
+import { Alert, BackHandler, Platform, StyleSheet } from "react-native";
+import { useEffect } from "react";
+import { usePathname, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { House, Layers, Plus, UserRound } from "lucide-react-native";
+import { colors } from "@/constants/theme";
 
-const COLORS = {
-  background: "#0B1114",
-  surface: "#141D21",
-  inactive: "#829096",
-  primary: "#54E1CD",
-};
+export default function TabsLayout() {
+    const insets = useSafeAreaInsets();
+    const pathname = usePathname();
+    const router = useRouter();
+    const bottomInset = Math.max(
+        insets.bottom,
+        Platform.OS === "android" ? 8 : 0,
+    );
 
-export default function TabLayout() {
-  return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: COLORS.primary,
-        tabBarInactiveTintColor: COLORS.inactive,
-        tabBarStyle: {
-          backgroundColor: COLORS.background,
-          borderTopColor: "#263338",
-          height: Platform.OS === "ios" ? 86 : 68,
-          paddingTop: 10,
-          paddingBottom: Platform.OS === "ios" ? 24 : 10,
-        },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: "600",
-        },
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Home",
-          tabBarIcon: ({ color, size }) => <House color={color} size={size} />,
-        }}
-      />
+    useEffect(() => {
+        if (Platform.OS !== "android") {
+            return;
+        }
 
-      <Tabs.Screen
-        name="add"
-        options={{
-          title: "Add",
-          tabBarIcon: ({ color, size }) => <Plus color={color} size={size} />,
-        }}
-      />
+        const subscription = BackHandler.addEventListener(
+            "hardwareBackPress",
+            () => {
+                if (pathname !== "/" && pathname !== "/(tabs)") {
+                    router.back();
+                    return true;
+                }
 
-      <Tabs.Screen
-        name="items"
-        options={{
-          title: "Items",
-          tabBarIcon: ({ color, size }) => <Layers color={color} size={size} />,
-        }}
-      />
+                Alert.alert("Exit Lapse?", "You are on the Home screen.", [
+                    { text: "Stay", style: "cancel" },
+                    {
+                        text: "Exit",
+                        style: "destructive",
+                        onPress: () => BackHandler.exitApp(),
+                    },
+                ]);
+                return true;
+            },
+        );
 
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: "Profile",
-          tabBarIcon: ({ color, size }) => (
-            <UserRound color={color} size={size} />
-          ),
-        }}
-      />
-    </Tabs>
-  );
+        return () => subscription.remove();
+    }, [pathname, router]);
+
+    return (
+        <Tabs
+            screenOptions={{
+                headerShown: false,
+                tabBarActiveTintColor: colors.accent,
+                tabBarInactiveTintColor: colors.muted,
+                tabBarStyle: [styles.tabBar, { paddingBottom: bottomInset }],
+                tabBarLabelStyle: styles.label,
+                tabBarItemStyle: styles.item,
+            }}
+        >
+            <Tabs.Screen
+                name="index"
+                options={{
+                    title: "Home",
+                    tabBarIcon: ({ color, size }) => (
+                        <House color={color} size={size} />
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="add"
+                options={{
+                    title: "Add",
+                    tabBarIcon: ({ color, size }) => (
+                        <Plus color={color} size={size} />
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="items"
+                options={{
+                    title: "Items",
+                    tabBarIcon: ({ color, size }) => (
+                        <Layers color={color} size={size} />
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="profile"
+                options={{
+                    title: "Profile",
+                    tabBarIcon: ({ color, size }) => (
+                        <UserRound color={color} size={size} />
+                    ),
+                }}
+            />
+        </Tabs>
+    );
 }
+
+const styles = StyleSheet.create({
+    tabBar: {
+        backgroundColor: colors.bg,
+        borderTopColor: colors.border,
+        height: 58,
+        paddingTop: 6,
+    },
+    label: {
+        fontSize: 11,
+        fontWeight: "700",
+    },
+    item: {
+        minHeight: 48,
+    },
+});

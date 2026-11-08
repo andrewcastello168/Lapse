@@ -1,0 +1,3 @@
+import {Image} from 'expo-image'; import {ActivityIndicator,StyleSheet,View} from 'react-native'; import {ImageOff} from 'lucide-react-native'; import {colors} from '@/constants/theme'; import {storageUrl} from '@/utils/storage';
+export function StorageImage({path,size=44}:{path?:string|null;size?:number}){const uri=storageUrl(path); return <View style={[s.box,{width:size,height:size,borderRadius:size*.22}]}>{uri?<Image source={{uri}} cachePolicy="memory-disk" style={{width:size*.72,height:size*.72}} contentFit="contain" placeholder={{blurhash:'L6PZfSi_.AyE_3t7t7R**0o#DgR4'}}/>:<ImageOff size={size*.42} color={colors.muted}/>}</View>}
+const s=StyleSheet.create({box:{backgroundColor:colors.surface2,alignItems:'center',justifyContent:'center',overflow:'hidden'}});

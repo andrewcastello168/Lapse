@@ -6,7 +6,7 @@ import {
     useMemo,
     useState,
 } from "react";
-import type { AuthSession, SessionUser } from "@/types/models";
+import type { SessionUser } from "@/types/models";
 import { api, setSession } from "@/services/api";
 import { clearSession, readSession, writeSession } from "@/utils/storage";
 

@@ -1,209 +1,140 @@
-import { useState } from "react";
-import {
-    Alert,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    View,
-} from "react-native";
+import { usePreferences, useThemeColors } from "@/context/preferences";
+import { router } from "expo-router";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import {
     Bell,
     ChevronRight,
     HelpCircle,
     Info,
-    LogOut,
     Palette,
     Smartphone,
-    Trash2,
+    UserRound,
 } from "lucide-react-native";
-import { Card } from "@/components/ui";
+import { Screen } from "@/components/ui";
 import { useAuth } from "@/context/auth";
-import { colors, spacing } from "@/constants/theme";
+import type { Palette as ThemePalette } from "@/constants/theme";
 
 const rows = [
-    ["Notifications", Bell],
-    ["Appearance", Palette],
-    ["Logged in Devices", Smartphone],
-    ["Help & Support", HelpCircle],
-    ["About", Info],
+    ["Account Settings", UserRound, "account"],
+    ["Notifications", Bell, "notifications"],
+    ["Appearance", Palette, "appearance"],
+    ["Logged in Devices", Smartphone, "devices"],
+    ["Help & Support", HelpCircle, "help"],
+    ["About", Info, "about"],
 ] as const;
-
 export default function Profile() {
+    const colors = useThemeColors();
+    const s = createStyles(colors);
+    const { mode } = usePreferences();
     const { user, signOut } = useAuth();
-    const [notifications, setNotifications] = useState(true);
-
-    const confirmSignOut = () => {
-        Alert.alert("Sign out", "Are you sure you want to sign out?", [
+    const confirmSignOut = () =>
+        Alert.alert("Sign Out", "Are you sure you want to sign out?", [
             { text: "Cancel", style: "cancel" },
-            { text: "Sign out", style: "destructive", onPress: signOut },
+            {
+                text: "Sign Out",
+                style: "destructive",
+                onPress: () => {
+                    void signOut();
+                },
+            },
         ]);
-    };
-
-    const initials = (user?.name ?? "Lapse")
-        .split(" ")
-        .map((part) => part[0])
-        .slice(0, 2)
-        .join("");
-
     return (
-        <View style={styles.root}>
-            <ScrollView contentContainerStyle={styles.content}>
-                <Text style={styles.heading}>Profile</Text>
-                <View style={styles.profile}>
-                    <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>{initials}</Text>
-                    </View>
-                    <Text style={styles.name}>
-                        {user?.name ?? "Lapse user"}
-                    </Text>
-                    <Text style={styles.email}>
-                        {user?.email ?? "Not signed in"}
+        <Screen title="Profile">
+            <View style={s.profile}>
+                <View style={s.avatar}>
+                    <Text style={s.avatarText}>
+                        {(user?.name ?? "L").charAt(0).toUpperCase()}
                     </Text>
                 </View>
-
-                <Card style={styles.menu}>
-                    {rows.map(([label, Icon]) => (
-                        <Pressable
-                            key={label}
-                            style={styles.row}
-                            onPress={() =>
-                                Alert.alert(
-                                    label,
-                                    label === "Notifications"
-                                        ? "Use the switch to control reminder notifications."
-                                        : "This setting is not connected to a backend endpoint yet.",
-                                )
-                            }
-                        >
-                            <Icon color={colors.muted} size={18} />
-                            <Text style={styles.label}>{label}</Text>
-                            {label === "Notifications" ? (
-                                <Switch
-                                    value={notifications}
-                                    onValueChange={setNotifications}
-                                    trackColor={{
-                                        false: colors.surface2,
-                                        true: colors.accentDark,
-                                    }}
-                                    thumbColor={
-                                        notifications
-                                            ? colors.accent
-                                            : colors.muted
-                                    }
-                                />
-                            ) : (
-                                <ChevronRight color={colors.muted} size={17} />
-                            )}
-                        </Pressable>
-                    ))}
-                </Card>
-
+                <Text style={s.name}>{user?.name ?? "Lapse user"}</Text>
+                <Text style={s.email}>{user?.email}</Text>
+            </View>
+            {rows.map(([label, Icon, section]) => (
                 <Pressable
+                    key={section}
+                    accessibilityRole="button"
+                    style={({ pressed }) => [
+                        s.row,
+                        { opacity: pressed ? 0.7 : 1 },
+                    ]}
                     onPress={() =>
-                        Alert.alert(
-                            "Delete Account",
-                            "Account deletion is not available because the backend does not expose a delete-account endpoint.",
-                        )
+                        section === "help" || section === "about"
+                            ? Alert.alert(
+                                  label,
+                                  section === "about"
+                                      ? "Lapse — keep track of your important documents and subscriptions."
+                                      : "Help & Support is not connected yet.",
+                              )
+                            : router.push({
+                                  pathname: "/settings",
+                                  params: { section },
+                              })
                     }
                 >
-                    <Card style={styles.menu}>
-                        <View style={styles.row}>
-                            <Trash2 color={colors.danger} size={18} />
-                            <Text style={[styles.label, styles.danger]}>
-                                Delete Account
-                            </Text>
-                            <ChevronRight color={colors.danger} size={17} />
-                        </View>
-                    </Card>
+                    <Icon color={colors.muted} size={18} />
+                    <Text style={s.label}>{label}</Text>
+                    {section === "appearance" ? (
+                        <Text style={s.value}>{mode}</Text>
+                    ) : null}
+                    <ChevronRight size={16} color={colors.muted} />
                 </Pressable>
-
-                <Pressable style={styles.signout} onPress={confirmSignOut}>
-                    <LogOut color={colors.danger} size={17} />
-                    <Text style={styles.signText}>Sign Out</Text>
-                </Pressable>
-            </ScrollView>
-        </View>
+            ))}
+            <Pressable
+                accessibilityRole="button"
+                onPress={confirmSignOut}
+                style={s.signout}
+            >
+                <Text style={s.signText}>Sign Out</Text>
+            </Pressable>
+        </Screen>
     );
 }
-
-const styles = StyleSheet.create({
-    root: {
-        flex: 1,
-        backgroundColor: colors.bg,
-    },
-    content: {
-        padding: spacing.lg,
-        paddingBottom: 110,
-    },
-    heading: {
-        color: colors.text,
-        fontSize: 30,
-        fontWeight: "900",
-        marginTop: 12,
-    },
-    profile: {
-        alignItems: "center",
-        marginVertical: spacing.xl,
-    },
-    avatar: {
-        width: 80,
-        height: 80,
-        borderRadius: 40,
-        backgroundColor: colors.surface2,
-        alignItems: "center",
-        justifyContent: "center",
-        marginBottom: 12,
-    },
-    avatarText: {
-        color: colors.text,
-        fontSize: 28,
-        fontWeight: "900",
-    },
-    name: {
-        color: colors.text,
-        fontSize: 16,
-        fontWeight: "900",
-    },
-    email: {
-        color: colors.muted,
-        fontSize: 12,
-        marginTop: 5,
-    },
-    menu: {
-        paddingHorizontal: 0,
-        marginBottom: spacing.md,
-    },
-    row: {
-        flexDirection: "row",
-        alignItems: "center",
-        padding: 16,
-        borderBottomColor: colors.border,
-        borderBottomWidth: 1,
-        minHeight: 56,
-    },
-    label: {
-        color: colors.text,
-        flex: 1,
-        marginLeft: 12,
-        fontSize: 14,
-    },
-    danger: {
-        color: colors.danger,
-    },
-    signout: {
-        height: 50,
-        borderRadius: 12,
-        backgroundColor: "#2D1A20",
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "row",
-        gap: 8,
-        marginTop: spacing.md,
-    },
-    signText: {
-        color: colors.danger,
-        fontWeight: "900",
-    },
-});
+const createStyles = (colors: ThemePalette) =>
+    StyleSheet.create({
+        profile: {
+            alignItems: "center",
+            paddingVertical: 16,
+            marginBottom: 12,
+        },
+        avatar: {
+            width: 74,
+            height: 74,
+            borderRadius: 37,
+            backgroundColor: colors.surface2,
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 10,
+        },
+        avatarText: { color: colors.text, fontSize: 36, fontWeight: "700" },
+        name: { color: colors.text, fontSize: 17, fontWeight: "700" },
+        email: { color: colors.muted, fontSize: 13, marginTop: 4 },
+        row: {
+            backgroundColor: colors.surface,
+            borderColor: colors.border,
+            borderWidth: 1,
+            borderRadius: 8,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 10,
+            minHeight: 50,
+            paddingHorizontal: 12,
+            marginBottom: 6,
+        },
+        label: { flex: 1, color: colors.text, fontSize: 14 },
+        value: {
+            backgroundColor: colors.surface2,
+            color: colors.text,
+            padding: 5,
+            borderRadius: 5,
+            fontSize: 12,
+        },
+        signout: {
+            backgroundColor: colors.surface2,
+            borderRadius: 8,
+            minHeight: 48,
+            alignItems: "center",
+            justifyContent: "center",
+            marginTop: 8,
+        },
+        signText: { color: colors.danger, fontSize: 14, fontWeight: "600" },
+    });

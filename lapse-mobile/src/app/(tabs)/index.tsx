@@ -1,304 +1,321 @@
-import { router } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useThemeColors } from "@/context/preferences";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Pressable,
-    ScrollView,
     StyleSheet,
     Text,
     View,
 } from "react-native";
-import { Bell, ChevronRight, Plus } from "lucide-react-native";
-import { Card, SectionTitle } from "@/components/ui";
-import { colors, spacing } from "@/constants/theme";
+import {
+    Bell,
+    CalendarDays,
+    Check,
+    ChevronDown,
+    Plus,
+} from "lucide-react-native";
+import { Image } from "expo-image";
+import { Input, Screen, SectionTitle } from "@/components/ui";
+import { ItemRow } from "@/components/item-row";
+import type { Palette } from "@/constants/theme";
 import { api } from "@/services/api";
-import type { TimelineOccurrence } from "@/types/models";
+import type { TimelineOccurrence, UserItem } from "@/types/models";
 import { useAuth } from "@/context/auth";
+import { dateOnly, parseDate } from "@/utils/item-dates";
 
-function dateOnly(value: string): string {
-    return value.slice(0, 10);
-}
-
-function daysUntil(value: string): number {
-    const target = new Date(`${dateOnly(value)}T00:00:00`).getTime();
-    const today = new Date();
-    const start = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-    ).getTime();
-    return Math.round((target - start) / 86_400_000);
-}
-
-function formatDate(value: string): string {
-    return new Date(`${dateOnly(value)}T00:00:00`).toLocaleDateString(
-        undefined,
-        {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-        },
-    );
-}
-
-function describeDays(value: number): string {
-    if (value < 0) {
-        return "Expired";
-    }
-    if (value === 0) {
-        return "Today";
-    }
-    if (value === 1) {
-        return "Tomorrow";
-    }
-    return `${value} days`;
-}
-
+const periods = [
+    "1 month",
+    "3 months",
+    "6 months",
+    "12 months",
+    "Custom range",
+];
 export default function Home() {
+    const colors = useThemeColors();
+    const s = createStyles(colors);
     const { user } = useAuth();
     const [upcoming, setUpcoming] = useState<TimelineOccurrence[]>([]);
+    const [items, setItems] = useState<UserItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
-
-    const load = useCallback(async () => {
-        const today = new Date();
-        const from = today.toISOString().slice(0, 10);
-        const to = new Date(
-            today.getFullYear(),
-            today.getMonth() + 3,
-            today.getDate() + 1,
-        )
-            .toISOString()
-            .slice(0, 10);
-        setLoading(true);
-
-        try {
-            const result = await api.timeline(from, to);
-            setUpcoming(result.data);
-        } catch (reason: unknown) {
-            setError(
-                reason instanceof Error
-                    ? reason.message
-                    : "Unable to load your timeline.",
-            );
-        } finally {
+    const [period, setPeriod] = useState("3 months");
+    const [menu, setMenu] = useState(false);
+    const [from, setFrom] = useState(dateOnly());
+    const [to, setTo] = useState("");
+    const generation = useRef(0);
+    const custom = period === "Custom range";
+    const load = useCallback(() => {
+        const request = ++generation.current;
+        if (custom && (!parseDate(from) || !parseDate(to) || from > to)) {
             setLoading(false);
+            return;
         }
-    }, []);
-
-    useEffect(() => {
-        void load();
-    }, [load]);
-
-    const initials = (user?.name ?? "Lapse")
-        .split(" ")
-        .map((part) => part[0])
-        .slice(0, 2)
-        .join("");
-
+        const today = new Date();
+        const end = new Date(
+            today.getFullYear(),
+            today.getMonth() + Number.parseInt(period),
+            today.getDate(),
+        );
+        setLoading(true);
+        setError("");
+        Promise.all([
+            api.timeline(
+                custom ? from : dateOnly(today),
+                custom ? to : dateOnly(end),
+            ),
+            api.userItems(),
+        ])
+            .then(([timeline, tracked]) => {
+                if (generation.current === request) {
+                    setUpcoming(timeline.data);
+                    setItems(tracked);
+                }
+            })
+            .catch((reason: unknown) => {
+                if (generation.current === request)
+                    setError(
+                        reason instanceof Error
+                            ? reason.message
+                            : "Unable to load upcoming items.",
+                    );
+            })
+            .finally(() => {
+                if (generation.current === request) setLoading(false);
+            });
+    }, [custom, from, period, to]);
+    useFocusEffect(
+        useCallback(() => {
+            load();
+            return () => {
+                generation.current++;
+            };
+        }, [load]),
+    );
+    const initial = (user?.name ?? "L").charAt(0).toUpperCase();
+    const validRange =
+        !custom || (parseDate(from) && parseDate(to) && from <= to);
     return (
-        <View style={styles.root}>
-            <ScrollView contentContainerStyle={styles.content}>
-                <View style={styles.top}>
-                    <View>
-                        <Text style={styles.kicker}>LAPSE</Text>
-                        <Text style={styles.greeting}>
-                            Good{" "}
-                            {new Date().getHours() < 12
-                                ? "morning"
-                                : new Date().getHours() < 18
-                                  ? "afternoon"
-                                  : "evening"}
-                        </Text>
-                    </View>
-                    <View style={styles.actions}>
-                        <Bell color={colors.text} size={20} />
-                        <View style={styles.avatar}>
-                            <Text style={styles.avatarText}>{initials}</Text>
-                        </View>
-                    </View>
+        <Screen>
+            <View style={s.top}>
+                <View style={s.brand}>
+                    <Image
+                        source={require("@/assets/images/branding/logo-mark.png")}
+                        style={s.logo}
+                        contentFit="contain"
+                    />
+                    <Text style={s.brandText}>Lapse</Text>
                 </View>
-
-                <Card style={styles.period}>
-                    <Text style={styles.periodText}>
-                        Upcoming in{" "}
-                        <Text style={{ color: colors.accent }}>3 months</Text>
-                    </Text>
-                    <ChevronRight color={colors.muted} size={18} />
-                </Card>
-
-                <SectionTitle
-                    title="Upcoming"
-                    action="See all"
-                    onPress={() => router.push("/(tabs)/items")}
-                />
-
-                {loading ? <ActivityIndicator color={colors.accent} /> : null}
-                {upcoming.map((item) => (
-                    <Card
-                        key={`${item.userItemId}-${item.occurrenceDate}`}
-                        style={styles.item}
+                <View style={s.actions}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Notifications"
+                        onPress={() =>
+                            router.push("/settings?section=notifications")
+                        }
+                        style={s.iconButton}
                     >
-                        <View style={styles.itemMain}>
-                            <Text style={styles.name}>{item.itemName}</Text>
-                            <Text style={styles.meta}>
-                                {formatDate(item.occurrenceDate)}
-                            </Text>
-                        </View>
-                        <View style={styles.badge}>
-                            <Text style={styles.badgeText}>
-                                {describeDays(daysUntil(item.occurrenceDate))}
-                            </Text>
-                        </View>
-                    </Card>
-                ))}
-
-                {upcoming.length === 0 && !loading ? (
-                    <Card style={styles.empty}>
-                        <Text style={styles.emptyTitle}>
-                            Nothing expiring soon
-                        </Text>
-                        <Text style={styles.meta}>
-                            Add a document or subscription to get reminders.
-                        </Text>
-                    </Card>
-                ) : null}
-
-                {error ? <Text style={styles.error}>{error}</Text> : null}
-
-                <Pressable onPress={() => router.push("/add-flow" as never)}>
-                    <View style={styles.addCard}>
-                        <View style={styles.plus}>
-                            <Plus color={colors.bg} />
-                        </View>
-                        <View>
-                            <Text style={styles.name}>
-                                Stay ahead of deadlines
-                            </Text>
-                            <Text style={styles.meta}>
-                                Add a document or subscription
-                            </Text>
-                        </View>
-                    </View>
+                        <Bell color={colors.text} size={21} />
+                    </Pressable>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Profile"
+                        style={s.avatar}
+                        onPress={() => router.push("/(tabs)/profile")}
+                    >
+                        <Text style={s.avatarText}>{initial}</Text>
+                    </Pressable>
+                </View>
+            </View>
+            <View style={s.periodContainer}>
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Upcoming date range"
+                    accessibilityState={{ expanded: menu }}
+                    style={s.period}
+                    onPress={() => setMenu(!menu)}
+                >
+                    <Text style={s.periodText}>{period}</Text>
+                    <ChevronDown size={16} color={colors.muted} />
                 </Pressable>
-            </ScrollView>
-        </View>
+                {menu ? (
+                    <View style={s.menu}>
+                        {periods.map((option) => (
+                            <Pressable
+                                key={option}
+                                accessibilityRole="button"
+                                onPress={() => {
+                                    setPeriod(option);
+                                    setMenu(false);
+                                }}
+                                style={s.menuRow}
+                            >
+                                <CalendarDays size={16} color={colors.text} />
+                                <Text style={s.menuText}>{option}</Text>
+                                {period === option ? (
+                                    <Check size={16} color={colors.accent} />
+                                ) : null}
+                            </Pressable>
+                        ))}
+                    </View>
+                ) : null}
+            </View>
+            {custom ? (
+                <View style={s.custom}>
+                    <Input
+                        label="From (YYYY-MM-DD)"
+                        value={from}
+                        onChangeText={setFrom}
+                    />
+                    <Input
+                        label="To (YYYY-MM-DD)"
+                        value={to}
+                        onChangeText={setTo}
+                    />
+                </View>
+            ) : null}
+            <SectionTitle
+                title="Upcoming"
+                action="See all"
+                onPress={() => router.push("/(tabs)/items")}
+            />
+            {loading ? <ActivityIndicator color={colors.accent} /> : null}
+            {validRange ? (
+                upcoming
+                    .filter(
+                        (entry, index, rows) =>
+                            rows.findIndex(
+                                (other) =>
+                                    String(other.userItemId) ===
+                                    String(entry.userItemId),
+                            ) === index,
+                    )
+                    .slice(0, 4)
+                    .map((occurrence) => {
+                        const item = items.find(
+                            (row) =>
+                                String(row.id) ===
+                                String(occurrence.userItemId),
+                        );
+                        return item ? (
+                            <ItemRow
+                                key={`${occurrence.userItemId}-${occurrence.occurrenceDate}`}
+                                item={item}
+                                occurrenceDate={occurrence.occurrenceDate}
+                                onPress={() =>
+                                    router.push({
+                                        pathname: "/item/[id]",
+                                        params: { id: String(item.id) },
+                                    })
+                                }
+                            />
+                        ) : null;
+                    })
+            ) : (
+                <Text style={s.empty}>Choose a valid date range.</Text>
+            )}
+            {!loading && !error && validRange && !upcoming.length ? (
+                <Text style={s.empty}>Nothing expiring soon.</Text>
+            ) : null}
+            {error ? (
+                <Pressable onPress={load}>
+                    <Text selectable style={s.error}>
+                        {error} Tap to retry.
+                    </Text>
+                </Pressable>
+            ) : null}
+            <View style={s.spacer} />
+            <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add item"
+                onPress={() => router.push("/add-flow")}
+                style={({ pressed }) => [
+                    s.add,
+                    { opacity: pressed ? 0.75 : 1 },
+                ]}
+            >
+                <Plus color={colors.onAccent} size={28} />
+            </Pressable>
+        </Screen>
     );
 }
-
-const styles = StyleSheet.create({
-    root: {
-        flex: 1,
-        backgroundColor: colors.bg,
-    },
-    content: {
-        padding: spacing.lg,
-        paddingBottom: 110,
-    },
-    top: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: spacing.lg,
-    },
-    kicker: {
-        color: colors.accent,
-        fontWeight: "900",
-        letterSpacing: 2,
-        fontSize: 12,
-    },
-    greeting: {
-        color: colors.text,
-        fontSize: 24,
-        fontWeight: "900",
-        marginTop: 5,
-    },
-    actions: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 16,
-    },
-    avatar: {
-        width: 38,
-        height: 38,
-        borderRadius: 20,
-        backgroundColor: colors.surface2,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    avatarText: {
-        color: colors.text,
-        fontWeight: "900",
-    },
-    period: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: spacing.xl,
-    },
-    periodText: {
-        color: colors.text,
-        fontSize: 14,
-    },
-    item: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        marginBottom: spacing.sm,
-        padding: 12,
-    },
-    itemMain: {
-        flex: 1,
-    },
-    name: {
-        color: colors.text,
-        fontWeight: "800",
-        fontSize: 14,
-    },
-    meta: {
-        color: colors.muted,
-        fontSize: 12,
-        marginTop: 4,
-    },
-    badge: {
-        backgroundColor: "#49252B",
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 8,
-    },
-    badgeText: {
-        color: "#FF7680",
-        fontSize: 11,
-        fontWeight: "900",
-    },
-    empty: {
-        alignItems: "center",
-    },
-    emptyTitle: {
-        color: colors.text,
-        fontWeight: "800",
-    },
-    error: {
-        color: colors.danger,
-        marginBottom: spacing.sm,
-    },
-    addCard: {
-        borderRadius: 18,
-        borderWidth: 1,
-        borderColor: colors.accentDark,
-        backgroundColor: "#0A2929",
-        padding: 16,
-        flexDirection: "row",
-        alignItems: "center",
-        marginTop: spacing.md,
-    },
-    plus: {
-        width: 38,
-        height: 38,
-        borderRadius: 20,
-        backgroundColor: colors.accent,
-        alignItems: "center",
-        justifyContent: "center",
-        marginRight: 12,
-    },
-});
+const createStyles = (colors: Palette) =>
+    StyleSheet.create({
+        top: {
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 18,
+            marginTop: 6,
+        },
+        brand: { flexDirection: "row", gap: 6, alignItems: "center" },
+        logo: { width: 26, height: 26 },
+        brandText: { color: colors.text, fontSize: 21, fontWeight: "700" },
+        actions: { flexDirection: "row", alignItems: "center", gap: 12 },
+        iconButton: {
+            width: 44,
+            height: 44,
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        avatar: {
+            height: 36,
+            width: 36,
+            borderRadius: 18,
+            backgroundColor: colors.surface2,
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        avatarText: { color: colors.text, fontWeight: "700", fontSize: 17 },
+        periodContainer: { zIndex: 2, marginBottom: 22 },
+        period: {
+            flexDirection: "row",
+            alignSelf: "flex-start",
+            alignItems: "center",
+            gap: 28,
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: 8,
+            backgroundColor: colors.surface2,
+            padding: 12,
+        },
+        periodText: { color: colors.text, fontSize: 14 },
+        menu: {
+            position: "absolute",
+            top: 0,
+            left: 0,
+            minWidth: 180,
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surface,
+            borderRadius: 8,
+        },
+        menuRow: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
+            minHeight: 48,
+            paddingHorizontal: 12,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: colors.border,
+        },
+        menuText: { color: colors.text, fontSize: 14, flex: 1 },
+        custom: { marginBottom: 8 },
+        empty: {
+            color: colors.muted,
+            textAlign: "center",
+            paddingVertical: 32,
+        },
+        error: { color: colors.danger, marginVertical: 16 },
+        spacer: { flex: 1, minHeight: 30 },
+        add: {
+            width: 50,
+            height: 50,
+            borderRadius: 25,
+            backgroundColor: colors.accent,
+            alignItems: "center",
+            justifyContent: "center",
+            alignSelf: "center",
+            marginBottom: 4,
+        },
+    });

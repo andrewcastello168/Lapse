@@ -96,6 +96,18 @@ export const api = {
             method: "POST",
             body: JSON.stringify(body),
         }),
+    userItems: () => request<UserItem[]>("/user-items"),
+    userItem: (id: string) =>
+        request<UserItem>(`/user-items/${encodeURIComponent(id)}`),
+    updateItem: (id: string, body: Record<string, unknown>) =>
+        request<UserItem>(`/user-items/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+        }),
+    deleteItem: (id: string) =>
+        request<{ deleted: boolean }>(`/user-items/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+        }),
     timeline: (from: string, to: string) =>
         request<{ data: TimelineOccurrence[] }>(
             `/timeline?from=${from}&to=${to}`,

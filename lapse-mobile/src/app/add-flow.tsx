@@ -1,173 +1,163 @@
+import { CategoryIcon } from "@/components/category-icon";
+import { useThemeColors } from "@/context/preferences";
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
+    BackHandler,
     Pressable,
-    ScrollView,
     StyleSheet,
     Text,
+    TextInput,
     View,
 } from "react-native";
+import { Check, ChevronRight, Info, Search } from "lucide-react-native";
 import { StorageImage } from "@/components/storage-image";
-import { Button, Card, Input, SectionTitle } from "@/components/ui";
-import { colors, spacing } from "@/constants/theme";
+import { Button, Card, Input, Screen } from "@/components/ui";
+import { ExpiryFields, type ExpiryDraft } from "@/components/expiry-fields";
+import type { Palette } from "@/constants/theme";
 import { api } from "@/services/api";
-import type { Category, ExpiryType, MasterItem } from "@/types/models";
+import type { Category, MasterItem } from "@/types/models";
+import { parseDate } from "@/utils/item-dates";
 
-type Recurrence = {
-    years: string;
-    months: string;
-    days: string;
+const descriptions: Record<string, string> = {
+    Identity: "KTP, SIM, Passport",
+    Subscription: "Netflix, Spotify, gym, cloud storage",
+    Vehicle: "Vehicle tax, STNK, service",
+    Legal: "Contracts, insurance, permits",
+    Others: "Anything else with a deadline",
 };
-
-const emptyRecurrence: Recurrence = {
-    years: "",
-    months: "",
-    days: "",
-};
-
-function positiveInteger(value: string): number | undefined {
-    const parsed = Number(value);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
-}
+const emptyDraft = (): ExpiryDraft => ({
+    expiryType: "ONCE",
+    expiryDate: "",
+    interval: { years: 0, months: 0, days: 0 },
+});
 
 export default function AddFlow() {
+    const colors = useThemeColors();
+    const s = createStyles(colors);
     const [step, setStep] = useState(1);
+    const [custom, setCustom] = useState(false);
     const [categories, setCategories] = useState<Category[]>([]);
     const [masterItems, setMasterItems] = useState<MasterItem[]>([]);
     const [category, setCategory] = useState<Category | null>(null);
     const [masterItem, setMasterItem] = useState<MasterItem | null>(null);
     const [itemName, setItemName] = useState("");
     const [search, setSearch] = useState("");
-    const [expiryType, setExpiryType] = useState<ExpiryType>("ONCE");
-    const [expiryDate, setExpiryDate] = useState("");
-    const [recurrence, setRecurrence] = useState<Recurrence>(emptyRecurrence);
+    const [draft, setDraft] = useState(emptyDraft);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const savingRef = useRef(false);
     const [error, setError] = useState("");
+    const [retry, setRetry] = useState(0);
 
     useEffect(() => {
         let active = true;
-
-        api.categories()
+        const request = category ? api.items(category.id) : api.categories();
+        request
             .then((result) => {
-                if (active) {
-                    setCategories(result);
-                }
+                if (!active) return;
+                if (category) setMasterItems(result as MasterItem[]);
+                else setCategories(result as Category[]);
             })
             .catch((reason: unknown) => {
-                if (active) {
-                    setError(
-                        reason instanceof Error
-                            ? reason.message
-                            : "Unable to load categories.",
-                    );
-                }
-            })
-            .finally(() => {
-                if (active) {
-                    setLoading(false);
-                }
-            });
-
-        return () => {
-            active = false;
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!category) {
-            return;
-        }
-
-        let active = true;
-        setLoading(true);
-        setMasterItems([]);
-
-        api.items(category.id)
-            .then((result) => {
-                if (active) {
-                    setMasterItems(result);
-                }
-            })
-            .catch((reason: unknown) => {
-                if (active) {
+                if (active)
                     setError(
                         reason instanceof Error
                             ? reason.message
                             : "Unable to load items.",
                     );
-                }
             })
             .finally(() => {
-                if (active) {
-                    setLoading(false);
-                }
+                if (active) setLoading(false);
             });
-
         return () => {
             active = false;
         };
-    }, [category]);
+    }, [category, retry]);
 
-    const filteredMasterItems = useMemo(() => {
-        const query = search.trim().toLowerCase();
-        if (!query) {
-            return masterItems;
+    const filtered = useMemo(
+        () =>
+            masterItems.filter((item) =>
+                item.name.toLowerCase().includes(search.trim().toLowerCase()),
+            ),
+        [masterItems, search],
+    );
+    const goBack = () => {
+        if (savingRef.current) return;
+        setError("");
+        if (step === 4 || step === 1) {
+            if (router.canGoBack()) router.back();
+            else router.replace("/(tabs)");
+        } else if (step === 3) setStep(2);
+        else if (custom) setCustom(false);
+        else {
+            setStep(1);
+            setLoading(true);
+            setCategory(null);
         }
-
-        return masterItems.filter((item) =>
-            item.name.toLowerCase().includes(query),
+    };
+    useEffect(() => {
+        const listener = BackHandler.addEventListener(
+            "hardwareBackPress",
+            () => {
+                goBack();
+                return true;
+            },
         );
-    }, [masterItems, search]);
-
-    const resetFlow = () => {
+        return () => listener.remove();
+    });
+    const reset = () => {
+        setLoading(true);
         setStep(1);
         setCategory(null);
         setMasterItem(null);
+        setCustom(false);
         setItemName("");
         setSearch("");
-        setExpiryType("ONCE");
-        setExpiryDate("");
-        setRecurrence(emptyRecurrence);
+        setDraft(emptyDraft());
         setError("");
     };
-
     const save = async () => {
+        if (savingRef.current) return;
         setError("");
-
-        if (!masterItem && !itemName.trim()) {
+        if (!category || (!masterItem && !itemName.trim())) {
             setError("Enter an item name.");
             return;
         }
-
-        if (expiryType !== "NEVER" && !/^\d{4}-\d{2}-\d{2}$/.test(expiryDate)) {
-            setError("Enter a valid date in YYYY-MM-DD format.");
+        if (draft.expiryType !== "NEVER" && !parseDate(draft.expiryDate)) {
+            setError("Choose a valid date.");
             return;
         }
-
-        const years = positiveInteger(recurrence.years);
-        const months = positiveInteger(recurrence.months);
-        const days = positiveInteger(recurrence.days);
-        if (expiryType === "RECURRING" && !years && !months && !days) {
+        if (
+            draft.expiryType === "RECURRING" &&
+            !Object.values(draft.interval).some((value) => value > 0)
+        ) {
             setError("Enter at least one positive recurrence interval.");
             return;
         }
-
+        savingRef.current = true;
         setSaving(true);
         try {
             await api.createItem({
-                ...(masterItem ? { miId: masterItem.id } : {}),
-                ...(!masterItem
-                    ? { mcId: category?.id, itemName: itemName.trim() }
+                ...(masterItem
+                    ? { miId: masterItem.id }
+                    : { mcId: category.id, itemName: itemName.trim() }),
+                expiryType: draft.expiryType,
+                ...(draft.expiryType !== "NEVER"
+                    ? { expiryDate: draft.expiryDate }
                     : {}),
-                expiryType,
-                ...(expiryType === "NEVER" ? {} : { expiryDate }),
-                ...(expiryType === "RECURRING"
+                ...(draft.expiryType === "RECURRING"
                     ? {
-                          recurrenceYears: years,
-                          recurrenceMonths: months,
-                          recurrenceDays: days,
+                          ...(draft.interval.years
+                              ? { recurrenceYears: draft.interval.years }
+                              : {}),
+                          ...(draft.interval.months
+                              ? { recurrenceMonths: draft.interval.months }
+                              : {}),
+                          ...(draft.interval.days
+                              ? { recurrenceDays: draft.interval.days }
+                              : {}),
                       }
                     : {}),
             });
@@ -179,292 +169,483 @@ export default function AddFlow() {
                     : "Unable to save this item.",
             );
         } finally {
+            savingRef.current = false;
             setSaving(false);
         }
     };
-
-    const goBack = () => {
-        if (step === 1) {
-            router.back();
-            return;
-        }
-
-        setStep((current) => current - 1);
-    };
+    const identity = (
+        <Card style={s.identity}>
+            <>
+                {masterItem ? (
+                    <StorageImage path={masterItem.image_path} size={46} />
+                ) : (
+                    <CategoryIcon
+                        name={category?.name}
+                        path={category?.image_path}
+                        size={46}
+                    />
+                )}
+            </>
+            <View style={s.main}>
+                <Text style={s.name}>
+                    {masterItem?.name ?? (itemName.trim() || "Custom item")}
+                </Text>
+                <Text style={s.meta}>
+                    {category?.name}
+                    {!masterItem ? " · Custom" : ""}
+                </Text>
+            </View>
+        </Card>
+    );
+    const footer =
+        step === 3 ? (
+            <Button
+                title={saving ? "Saving..." : "Save item"}
+                onPress={save}
+                disabled={saving}
+            />
+        ) : step === 2 && custom ? (
+            <Button
+                title="Continue"
+                onPress={() => {
+                    if (!itemName.trim()) {
+                        setError("Enter an item name.");
+                        return;
+                    }
+                    setError("");
+                    setStep(3);
+                }}
+            />
+        ) : undefined;
 
     return (
-        <View style={styles.root}>
-            <ScrollView contentContainerStyle={styles.content}>
-                <Pressable onPress={goBack} hitSlop={12}>
-                    <Text style={styles.back}>‹</Text>
-                </Pressable>
-                <Text style={styles.heading}>
-                    {step === 4 ? "Item Added" : "Add Item"}
-                </Text>
-                {step < 4 ? (
-                    <Text style={styles.progress}>STEP {step} OF 3</Text>
-                ) : null}
-
-                {step === 1 ? (
-                    <>
-                        <Text style={styles.title}>Choose a category</Text>
-                        {loading ? (
-                            <ActivityIndicator color={colors.accent} />
-                        ) : null}
-                        {categories.map((item) => (
-                            <Card key={String(item.id)} style={styles.card}>
-                                <StorageImage
-                                    path={item.image_path}
-                                    size={42}
+        <Screen
+            title={step < 4 ? "Add Item" : undefined}
+            onBack={step < 4 ? goBack : undefined}
+            footer={footer}
+        >
+            {step < 4 ? (
+                <View style={s.steps}>
+                    {["Category", "Item", "Details"].map((label, index) => (
+                        <View key={label} style={s.step}>
+                            {index < 2 ? (
+                                <View
+                                    style={[
+                                        s.line,
+                                        step > index + 1 && {
+                                            backgroundColor: colors.accentDark,
+                                        },
+                                    ]}
                                 />
-                                <Pressable
-                                    style={styles.cardAction}
-                                    onPress={() => {
-                                        setCategory(item);
-                                        setStep(2);
-                                    }}
+                            ) : null}
+                            <View
+                                style={[
+                                    s.circle,
+                                    step >= index + 1 && s.circleActive,
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        s.stepNumber,
+                                        step >= index + 1 && {
+                                            color: colors.onAccent,
+                                        },
+                                    ]}
                                 >
-                                    <Text style={styles.cardName}>
-                                        {item.name}
-                                    </Text>
-                                </Pressable>
-                            </Card>
-                        ))}
-                    </>
-                ) : null}
-
-                {step === 2 ? (
-                    <>
-                        <SectionTitle title="Choose an item" />
-                        {masterItems.length > 0 ? (
-                            <Input
-                                label="Search"
-                                placeholder="Search master items"
-                                value={search}
-                                onChangeText={setSearch}
-                            />
-                        ) : null}
-                        {loading ? (
-                            <ActivityIndicator color={colors.accent} />
-                        ) : null}
-                        {filteredMasterItems.map((item) => (
-                            <Card key={String(item.id)} style={styles.card}>
-                                <StorageImage
-                                    path={item.image_path}
-                                    size={42}
-                                />
-                                <Pressable
-                                    style={styles.cardAction}
-                                    onPress={() => {
-                                        setMasterItem(item);
-                                        setItemName(item.name);
-                                        setStep(3);
-                                    }}
-                                >
-                                    <Text style={styles.cardName}>
-                                        {item.name}
-                                    </Text>
-                                </Pressable>
-                            </Card>
-                        ))}
-                        <SectionTitle title="Or create a custom item" />
-                        <Input
-                            label="Item name"
-                            placeholder="e.g. Passport renewal"
-                            value={itemName}
-                            onChangeText={setItemName}
-                        />
-                        <Button title="Continue" onPress={() => setStep(3)} />
-                    </>
-                ) : null}
-
-                {step === 3 ? (
-                    <>
-                        <SectionTitle title="Expiration details" />
-                        <View style={styles.segment}>
-                            {(["ONCE", "RECURRING", "NEVER"] as const).map(
-                                (type) => (
-                                    <Pressable
-                                        key={type}
-                                        onPress={() => setExpiryType(type)}
-                                        style={[
-                                            styles.segmentItem,
-                                            expiryType === type &&
-                                                styles.segmentActive,
-                                        ]}
-                                    >
-                                        <Text
-                                            style={[
-                                                styles.segmentText,
-                                                expiryType === type &&
-                                                    styles.segmentTextActive,
-                                            ]}
-                                        >
-                                            {type === "NEVER"
-                                                ? "None"
-                                                : type === "ONCE"
-                                                  ? "Once"
-                                                  : "Recurring"}
-                                        </Text>
-                                    </Pressable>
-                                ),
-                            )}
+                                    {index + 1}
+                                </Text>
+                            </View>
+                            <Text
+                                style={[
+                                    s.stepLabel,
+                                    step >= index + 1 && {
+                                        color: colors.accent,
+                                    },
+                                ]}
+                            >
+                                {label}
+                            </Text>
                         </View>
-                        {expiryType !== "NEVER" ? (
-                            <Input
-                                label="First due date (YYYY-MM-DD)"
-                                placeholder="2027-01-15"
-                                value={expiryDate}
-                                onChangeText={setExpiryDate}
+                    ))}
+                </View>
+            ) : null}
+            {step === 1 ? (
+                <>
+                    <Text style={s.title}>What are you tracking?</Text>
+                    <Text style={s.help}>
+                        Pick a category. You can choose a ready-made item or add
+                        your own.
+                    </Text>
+                    {categories.map((item) => (
+                        <Pressable
+                            key={String(item.id)}
+                            accessibilityRole="button"
+                            onPress={() => {
+                                setLoading(true);
+                                setCategory(item);
+                                setMasterItems([]);
+                                setMasterItem(null);
+                                setItemName("");
+                                setSearch("");
+                                setCustom(false);
+                                setDraft(emptyDraft());
+                                setError("");
+                                setStep(2);
+                            }}
+                            style={({ pressed }) => [
+                                s.category,
+                                pressed && s.pressed,
+                            ]}
+                        >
+                            <CategoryIcon
+                                name={item.name}
+                                path={item.image_path}
+                                size={46}
                             />
-                        ) : null}
-                        {expiryType === "RECURRING" ? (
-                            <>
-                                <Input
-                                    label="Years"
-                                    keyboardType="number-pad"
-                                    value={recurrence.years}
-                                    onChangeText={(value) =>
-                                        setRecurrence((current) => ({
-                                            ...current,
-                                            years: value,
-                                        }))
-                                    }
-                                />
-                                <Input
-                                    label="Months"
-                                    keyboardType="number-pad"
-                                    value={recurrence.months}
-                                    onChangeText={(value) =>
-                                        setRecurrence((current) => ({
-                                            ...current,
-                                            months: value,
-                                        }))
-                                    }
-                                />
-                                <Input
-                                    label="Days"
-                                    keyboardType="number-pad"
-                                    value={recurrence.days}
-                                    onChangeText={(value) =>
-                                        setRecurrence((current) => ({
-                                            ...current,
-                                            days: value,
-                                        }))
-                                    }
-                                />
-                            </>
-                        ) : null}
-                        <Button
-                            title={saving ? "Saving..." : "Save item"}
-                            onPress={save}
-                            disabled={saving}
+                            <View style={s.main}>
+                                <Text style={s.name}>{item.name}</Text>
+                                <Text style={s.meta}>
+                                    {descriptions[item.name]}
+                                </Text>
+                            </View>
+                        </Pressable>
+                    ))}
+                </>
+            ) : null}
+            {step === 2 && !custom ? (
+                <>
+                    <View style={s.titleRow}>
+                        <Text style={s.title}>Pick an item</Text>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Change category"
+                            onPress={() => {
+                                setLoading(true);
+                                setCategory(null);
+                                setStep(1);
+                            }}
+                            style={s.chip}
+                        >
+                            <CategoryIcon
+                                name={category?.name}
+                                path={category?.image_path}
+                                size={22}
+                            />
+                            <Text style={s.chipText}>{category?.name}</Text>
+                            <ChevronRight size={14} color={colors.warning} />
+                        </Pressable>
+                    </View>
+                    <View style={s.search}>
+                        <Search color={colors.muted} size={16} />
+                        <TextInput
+                            style={s.searchInput}
+                            placeholder="Search items..."
+                            accessibilityLabel="Search items"
+                            placeholderTextColor={colors.muted}
+                            value={search}
+                            onChangeText={setSearch}
                         />
-                    </>
-                ) : null}
-
-                {step === 4 ? (
-                    <>
-                        <Text style={styles.success}>✓</Text>
-                        <Text style={styles.center}>
-                            Your item has been successfully added.
+                    </View>
+                    {filtered.map((item) => (
+                        <Pressable
+                            key={String(item.id)}
+                            accessibilityRole="button"
+                            onPress={() => {
+                                setMasterItem(item);
+                                setCustom(false);
+                                setItemName(item.name);
+                                setError("");
+                                setStep(3);
+                            }}
+                            style={({ pressed }) => [
+                                s.category,
+                                pressed && s.pressed,
+                            ]}
+                        >
+                            <StorageImage path={item.image_path} size={40} />
+                            <Text style={[s.name, s.main]}>{item.name}</Text>
+                            <ChevronRight size={18} color={colors.muted} />
+                        </Pressable>
+                    ))}
+                    {!loading && !error && !filtered.length ? (
+                        <Text style={s.help}>
+                            {search
+                                ? "No items match your search."
+                                : "No ready-made items in this category."}
                         </Text>
-                        <Button title="Add another item" onPress={resetFlow} />
+                    ) : null}
+                    <Pressable
+                        accessibilityRole="button"
+                        style={s.custom}
+                        onPress={() => {
+                            setMasterItem(null);
+                            setItemName("");
+                            setCustom(true);
+                            setError("");
+                        }}
+                    >
+                        <CategoryIcon
+                            name={category?.name}
+                            path={category?.image_path}
+                            size={48}
+                        />
+                        <View style={s.main}>
+                            <Text style={s.name}>Add custom item</Text>
+                            <Text style={s.meta}>
+                                Uses the ‘{category?.name}’ icon automatically
+                            </Text>
+                        </View>
+                    </Pressable>
+                </>
+            ) : null}
+            {step === 2 && custom ? (
+                <Card>
+                    <Text style={s.title}>Custom item</Text>
+                    {identity}
+                    <Input
+                        label="Item name"
+                        value={itemName}
+                        onChangeText={setItemName}
+                        maxLength={100}
+                    />
+                    <View style={s.info}>
+                        <Info size={16} color={colors.muted} />
+                        <Text style={s.infoText}>
+                            The icon follows the category you picked, so custom
+                            items always look consistent with the rest.
+                        </Text>
+                    </View>
+                </Card>
+            ) : null}
+            {step === 3 ? (
+                <>
+                    {identity}
+                    <ExpiryFields value={draft} onChange={setDraft} />
+                </>
+            ) : null}
+            {step === 4 ? (
+                <View style={s.success}>
+                    <View style={s.successIcon}>
+                        {[
+                            [-22, -12],
+                            [10, -32],
+                            [58, -24],
+                            [115, -10],
+                            [-30, 38],
+                            [126, 40],
+                            [-13, 99],
+                            [112, 95],
+                            [50, 122],
+                        ].map(([left, top], index) => (
+                            <View
+                                key={index}
+                                style={{
+                                    position: "absolute",
+                                    left,
+                                    top,
+                                    width: 5,
+                                    height: 7,
+                                    backgroundColor: [
+                                        colors.accent,
+                                        colors.warning,
+                                        colors.danger,
+                                    ][index % 3],
+                                    transform: [{ rotate: "40deg" }],
+                                }}
+                            />
+                        ))}
+                        <Check
+                            color={colors.onAccent}
+                            size={64}
+                            strokeWidth={3}
+                        />
+                    </View>
+                    <Text style={s.successTitle}>Item added</Text>
+                    <Text style={s.successText}>
+                        {itemName.trim()} has been successfully added to your
+                        items.
+                    </Text>
+                    <View style={s.successButtons}>
+                        <Button title="Add another item" onPress={reset} />
                         <Button
                             title="Go to items"
                             variant="secondary"
                             onPress={() => router.replace("/(tabs)/items")}
                         />
-                    </>
-                ) : null}
-
-                {error ? <Text style={styles.error}>{error}</Text> : null}
-            </ScrollView>
-        </View>
+                    </View>
+                </View>
+            ) : null}
+            {loading && step < 3 && !custom ? (
+                <ActivityIndicator color={colors.accent} />
+            ) : null}
+            {error ? (
+                <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                        if (step < 3 && !custom) {
+                            setLoading(true);
+                            setError("");
+                            setRetry((n) => n + 1);
+                        }
+                    }}
+                >
+                    <Text selectable accessibilityRole="alert" style={s.error}>
+                        {error}
+                        {step < 3 && !custom ? " Tap to retry." : ""}
+                    </Text>
+                </Pressable>
+            ) : null}
+        </Screen>
     );
 }
-
-const styles = StyleSheet.create({
-    root: {
-        flex: 1,
-        backgroundColor: colors.bg,
-    },
-    content: {
-        padding: spacing.lg,
-        paddingBottom: 100,
-    },
-    back: {
-        color: colors.text,
-        fontSize: 34,
-    },
-    heading: {
-        color: colors.text,
-        fontSize: 24,
-        fontWeight: "900",
-        marginTop: spacing.md,
-    },
-    progress: {
-        color: colors.accent,
-        fontSize: 11,
-        fontWeight: "900",
-        marginTop: 8,
-    },
-    title: {
-        color: colors.text,
-        fontSize: 20,
-        fontWeight: "900",
-        marginVertical: spacing.xl,
-    },
-    card: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-        marginBottom: 8,
-    },
-    cardAction: {
-        flex: 1,
-    },
-    cardName: {
-        color: colors.text,
-        fontWeight: "900",
-        fontSize: 15,
-    },
-    segment: {
-        flexDirection: "row",
-        gap: 7,
-        marginBottom: spacing.lg,
-    },
-    segmentItem: {
-        flex: 1,
-        alignItems: "center",
-        paddingVertical: 12,
-        borderRadius: 10,
-        backgroundColor: colors.surface,
-    },
-    segmentActive: {
-        backgroundColor: colors.accent,
-    },
-    segmentText: {
-        color: colors.muted,
-        fontSize: 11,
-    },
-    segmentTextActive: {
-        color: colors.bg,
-        fontWeight: "900",
-    },
-    success: {
-        alignSelf: "center",
-        color: colors.accent,
-        fontSize: 80,
-        fontWeight: "900",
-        marginTop: 80,
-    },
-    center: {
-        color: colors.text,
-        textAlign: "center",
-        marginVertical: spacing.xl,
-    },
-    error: {
-        color: colors.danger,
-    },
-});
+const createStyles = (colors: Palette) =>
+    StyleSheet.create({
+        steps: { flexDirection: "row", marginBottom: 24, paddingHorizontal: 6 },
+        step: { flex: 1, alignItems: "center" },
+        line: {
+            position: "absolute",
+            top: 13,
+            left: "50%",
+            width: "100%",
+            height: 1,
+            backgroundColor: colors.border,
+        },
+        circle: {
+            height: 26,
+            width: 26,
+            borderRadius: 13,
+            borderWidth: 1,
+            borderColor: colors.muted,
+            backgroundColor: colors.bg,
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        circleActive: {
+            backgroundColor: colors.accent,
+            borderColor: colors.accent,
+        },
+        stepNumber: { color: colors.muted, fontSize: 12, fontWeight: "700" },
+        stepLabel: { color: colors.muted, fontSize: 12, marginTop: 6 },
+        title: {
+            color: colors.text,
+            fontSize: 19,
+            fontWeight: "700",
+            marginBottom: 8,
+        },
+        help: {
+            color: colors.muted,
+            fontSize: 14,
+            lineHeight: 21,
+            marginBottom: 14,
+        },
+        category: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
+            backgroundColor: colors.surface,
+            padding: 10,
+            borderRadius: 8,
+            marginBottom: 8,
+        },
+        main: { flex: 1 },
+        name: { color: colors.text, fontSize: 14, fontWeight: "600" },
+        meta: {
+            color: colors.muted,
+            fontSize: 12,
+            marginTop: 4,
+            lineHeight: 17,
+        },
+        pressed: { backgroundColor: colors.accentTint },
+        titleRow: {
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            marginBottom: 6,
+        },
+        chip: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 3,
+            padding: 5,
+            borderRadius: 6,
+            backgroundColor: colors.surface,
+        },
+        chipText: { color: colors.warning, fontSize: 11 },
+        search: {
+            flexDirection: "row",
+            gap: 8,
+            alignItems: "center",
+            paddingHorizontal: 10,
+            minHeight: 44,
+            borderRadius: 8,
+            backgroundColor: colors.surface,
+            borderWidth: 1,
+            borderColor: colors.border,
+            marginBottom: 12,
+        },
+        searchInput: {
+            flex: 1,
+            color: colors.text,
+            fontSize: 13,
+            paddingVertical: 10,
+        },
+        custom: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
+            padding: 12,
+            borderRadius: 8,
+            borderWidth: 1,
+            borderColor: colors.border,
+            marginTop: 4,
+        },
+        identity: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 18,
+            padding: 10,
+        },
+        info: { flexDirection: "row", gap: 6 },
+        infoText: {
+            flex: 1,
+            color: colors.muted,
+            fontSize: 12,
+            lineHeight: 18,
+        },
+        success: {
+            flex: 1,
+            justifyContent: "center",
+            alignItems: "center",
+            paddingVertical: 40,
+        },
+        successIcon: {
+            width: 100,
+            height: 100,
+            borderRadius: 50,
+            backgroundColor: colors.accent,
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 30,
+        },
+        successTitle: {
+            color: colors.text,
+            fontSize: 26,
+            fontWeight: "700",
+            marginBottom: 12,
+        },
+        successText: {
+            color: colors.muted,
+            textAlign: "center",
+            fontSize: 15,
+            lineHeight: 23,
+        },
+        successButtons: { alignSelf: "stretch", marginTop: 26 },
+        error: {
+            color: colors.danger,
+            fontSize: 13,
+            marginTop: 16,
+            lineHeight: 20,
+        },
+    });

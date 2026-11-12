@@ -1,12 +1,14 @@
-import { Tabs } from "expo-router";
+import { useThemeColors } from "@/context/preferences";
+import { Tabs, usePathname, useRouter } from "expo-router";
 import { Alert, BackHandler, Platform, StyleSheet } from "react-native";
 import { useEffect } from "react";
-import { usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { House, Layers, Plus, UserRound } from "lucide-react-native";
-import { colors } from "@/constants/theme";
+import { CirclePlus, House, LayoutGrid, UserRound } from "lucide-react-native";
+import type { Palette } from "@/constants/theme";
 
 export default function TabsLayout() {
+    const colors = useThemeColors();
+    const styles = createStyles(colors);
     const insets = useSafeAreaInsets();
     const pathname = usePathname();
     const router = useRouter();
@@ -49,7 +51,10 @@ export default function TabsLayout() {
                 headerShown: false,
                 tabBarActiveTintColor: colors.accent,
                 tabBarInactiveTintColor: colors.muted,
-                tabBarStyle: [styles.tabBar, { paddingBottom: bottomInset }],
+                tabBarStyle: [
+                    styles.tabBar,
+                    { paddingBottom: bottomInset, height: 56 + bottomInset },
+                ],
                 tabBarLabelStyle: styles.label,
                 tabBarItemStyle: styles.item,
             }}
@@ -65,10 +70,16 @@ export default function TabsLayout() {
             />
             <Tabs.Screen
                 name="add"
+                listeners={{
+                    tabPress: (event) => {
+                        event.preventDefault();
+                        router.push("/add-flow");
+                    },
+                }}
                 options={{
                     title: "Add",
                     tabBarIcon: ({ color, size }) => (
-                        <Plus color={color} size={size} />
+                        <CirclePlus color={color} size={size} />
                     ),
                 }}
             />
@@ -77,7 +88,7 @@ export default function TabsLayout() {
                 options={{
                     title: "Items",
                     tabBarIcon: ({ color, size }) => (
-                        <Layers color={color} size={size} />
+                        <LayoutGrid color={color} size={size} />
                     ),
                 }}
             />
@@ -94,18 +105,19 @@ export default function TabsLayout() {
     );
 }
 
-const styles = StyleSheet.create({
-    tabBar: {
-        backgroundColor: colors.bg,
-        borderTopColor: colors.border,
-        height: 58,
-        paddingTop: 6,
-    },
-    label: {
-        fontSize: 11,
-        fontWeight: "700",
-    },
-    item: {
-        minHeight: 48,
-    },
-});
+const createStyles = (colors: Palette) =>
+    StyleSheet.create({
+        tabBar: {
+            backgroundColor: colors.bg,
+            borderTopColor: colors.border,
+            minHeight: 56,
+            paddingTop: 6,
+        },
+        label: {
+            fontSize: 11,
+            fontWeight: "700",
+        },
+        item: {
+            minHeight: 48,
+        },
+    });

@@ -1,133 +1,162 @@
 import {
-    createContext,
-    useCallback,
-    useContext,
-    useEffect,
-    useMemo,
-    useState,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
 } from "react";
-import type { SessionUser } from "@/types/models";
-import { api, setSession } from "@/services/api";
+import type { AuthSession, SessionUser } from "@/types/models";
+import {
+  api,
+  getSession,
+  setSession,
+  subscribeSession,
+  ApiError,
+  setApiTimezone,
+} from "@/services/api";
 import { clearSession, readSession, writeSession } from "@/utils/storage";
-
 type AuthContextValue = {
-    user: SessionUser | null;
-    initializing: boolean;
-    loading: boolean;
-    error: string | null;
-    signIn: (email: string, password: string) => Promise<boolean>;
-    signUp: (name: string, email: string, password: string) => Promise<boolean>;
-    signOut: () => Promise<void>;
-    clearError: () => void;
+  user: SessionUser | null;
+  initializing: boolean;
+  loading: boolean;
+  error: string | null;
+  signIn: (email: string, password: string) => Promise<boolean>;
+  signUp: (name: string, email: string, password: string) => Promise<boolean>;
+  signOut: () => Promise<void>;
+  clearError: () => void;
+  updateUser: (user: SessionUser) => Promise<void>;
 };
-
-const AuthContext = createContext<AuthContextValue | null>(null);
-
-function errorMessage(reason: unknown): string {
-    return reason instanceof Error ? reason.message : "Something went wrong";
-}
-
+const Context = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-    const [user, setUser] = useState<SessionUser | null>(null);
-    const [initializing, setInitializing] = useState(true);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-
-    useEffect(() => {
-        let active = true;
-
-        readSession()
-            .then((stored) => {
-                if (!active || !stored) {
-                    return;
-                }
-                setSession(stored);
-                setUser(stored.user);
-            })
-            .finally(() => {
-                if (active) {
-                    setInitializing(false);
-                }
-            });
-
-        return () => {
-            active = false;
-        };
-    }, []);
-
-    const signIn = useCallback(async (email: string, password: string) => {
-        setLoading(true);
-        setError(null);
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [initializing, setInitializing] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(
+    () => subscribeSession((value) => setUser(value?.user ?? null)),
+    [],
+  );
+  useEffect(() => {
+    let active = true;
+    readSession()
+      .then(async (stored) => {
+        if (!active || !stored) return;
+        setSession(stored);
+        setApiTimezone(
+          stored.user.timezone ??
+            Intl.DateTimeFormat().resolvedOptions().timeZone,
+        );
         try {
-            const next = await api.login({ email, password });
+          const profile = await api.me();
+          if (active && getSession()) {
+            const next = { ...getSession()!, user: profile };
             setSession(next);
             await writeSession(next);
-            setUser(next.user);
-            return true;
-        } catch (reason: unknown) {
-            setError(errorMessage(reason));
-            return false;
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
-    const signUp = useCallback(
-        async (name: string, email: string, password: string) => {
-            setLoading(true);
-            setError(null);
-            try {
-                await api.signup({ name, email, password });
-                const next = await api.login({ email, password });
-                setSession(next);
-                await writeSession(next);
-                setUser(next.user);
-                return true;
-            } catch (reason: unknown) {
-                setError(errorMessage(reason));
-                return false;
-            } finally {
-                setLoading(false);
-            }
-        },
-        [],
-    );
-
-    const signOut = useCallback(async () => {
-        setLoading(true);
-        try {
-            await api.logout();
-        } finally {
+          }
+        } catch (reason) {
+          if (reason instanceof ApiError && reason.status === 401) {
             setSession(null);
             await clearSession();
-            setUser(null);
-            setLoading(false);
+          }
         }
-    }, []);
-
-    const value = useMemo(
-        () => ({
-            user,
-            initializing,
-            loading,
-            error,
-            signIn,
-            signUp,
-            signOut,
-            clearError: () => setError(null),
-        }),
-        [error, initializing, loading, signIn, signOut, signUp, user],
-    );
-
-    return (
-        <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-    );
-}
-
-export function useAuth(): AuthContextValue {
-    const context = useContext(AuthContext);
-    if (!context) {
-        throw new Error("useAuth must be used inside AuthProvider");
+      })
+      .finally(() => {
+        if (active) setInitializing(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const establish = async (next: AuthSession) => {
+    setSession(next);
+    await writeSession(next);
+    if (!next.user.timezone) {
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      setApiTimezone(zone);
+      try {
+        const profile = await api.profile({ timezone: zone });
+        const current = getSession();
+        if (current) {
+          const updated = { ...current, user: profile };
+          setSession(updated);
+          await writeSession(updated);
+        }
+      } catch {
+        /* Device timezone still accompanies every API request. */
+      }
     }
-    return context;
+  };
+  const signIn = useCallback(async (email: string, password: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      await establish(await api.login({ email, password }));
+      return true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to sign in");
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  const signUp = useCallback(
+    async (name: string, email: string, password: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        await api.signup({ name, email, password });
+        await establish(await api.login({ email, password }));
+        return true;
+      } catch (reason) {
+        setError(
+          reason instanceof Error ? reason.message : "Unable to create account",
+        );
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+  const signOut = useCallback(async () => {
+    setLoading(true);
+    try {
+      await api.logout();
+    } catch {
+      /* Clear the local session even when offline. */
+    } finally {
+      setSession(null);
+      await clearSession();
+      setLoading(false);
+    }
+  }, []);
+  const updateUser = useCallback(async (profile: SessionUser) => {
+    const current = getSession();
+    if (current) {
+      const next = { ...current, user: profile };
+      setSession(next);
+      await writeSession(next);
+    }
+  }, []);
+  const value = useMemo(
+    () => ({
+      user,
+      initializing,
+      loading,
+      error,
+      signIn,
+      signUp,
+      signOut,
+      updateUser,
+      clearError: () => setError(null),
+    }),
+    [user, initializing, loading, error, signIn, signUp, signOut, updateUser],
+  );
+  return <Context.Provider value={value}>{children}</Context.Provider>;
+}
+export function useAuth() {
+  const context = useContext(Context);
+  if (!context) throw new Error("AuthProvider is required");
+  return context;
 }

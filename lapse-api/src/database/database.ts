@@ -1,5 +1,9 @@
 import { Provider } from '@nestjs/common';
 import knex, { Knex } from 'knex';
+import pg from 'pg';
+
+// PostgreSQL DATE is a calendar value. Never convert it through the server's TZ.
+pg.types.setTypeParser(1082, (value: string) => value);
 
 export const DATABASE = 'DATABASE';
 
@@ -7,8 +11,6 @@ export const databaseProvider: Provider = {
   provide: DATABASE,
 
   useFactory: async (): Promise<Knex> => {
-    // console.log(process.env.DB_HOST);
-    // console.log(process.env.DB_PORT);
     const db = knex({
       client: 'pg',
       connection: {

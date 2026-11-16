@@ -1,651 +1,474 @@
-import { CategoryIcon } from "@/components/category-icon";
-import { useThemeColors } from "@/context/preferences";
-import { router } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-    ActivityIndicator,
-    BackHandler,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
-} from "react-native";
-import { Check, ChevronRight, Info, Search } from "lucide-react-native";
+import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useRef, useState } from "react";
+import { BackHandler, Pressable, Text, TextInput, View } from "react-native";
+import { Check, ChevronRight, Plus, Search } from "lucide-react-native";
+import { Button, Input, Screen } from "@/components/ui";
+import { Feedback } from "@/components/feedback";
 import { StorageImage } from "@/components/storage-image";
-import { Button, Card, Input, Screen } from "@/components/ui";
-import { ExpiryFields, type ExpiryDraft } from "@/components/expiry-fields";
-import type { Palette } from "@/constants/theme";
+import {
+  ExpiryFields,
+  draftInput,
+  type ExpiryDraft,
+} from "@/components/expiry-fields";
+import { useThemeColors } from "@/context/preferences";
 import { api } from "@/services/api";
 import type { Category, MasterItem } from "@/types/models";
 import { parseDate } from "@/utils/item-dates";
-
-const descriptions: Record<string, string> = {
-    Identity: "KTP, SIM, Passport",
-    Subscription: "Netflix, Spotify, gym, cloud storage",
-    Vehicle: "Vehicle tax, STNK, service",
-    Legal: "Contracts, insurance, permits",
-    Others: "Anything else with a deadline",
-};
-const emptyDraft = (): ExpiryDraft => ({
-    expiryType: "ONCE",
-    expiryDate: "",
-    interval: { years: 0, months: 0, days: 0 },
+const blank = (): ExpiryDraft => ({
+  expiryType: "ONCE",
+  expiryDate: "",
+  interval: { years: 0, months: 0, days: 0 },
+  renewalMode: "AUTOMATIC",
 });
-
 export default function AddFlow() {
-    const colors = useThemeColors();
-    const s = createStyles(colors);
-    const [step, setStep] = useState(1);
-    const [custom, setCustom] = useState(false);
-    const [categories, setCategories] = useState<Category[]>([]);
-    const [masterItems, setMasterItems] = useState<MasterItem[]>([]);
-    const [category, setCategory] = useState<Category | null>(null);
-    const [masterItem, setMasterItem] = useState<MasterItem | null>(null);
-    const [itemName, setItemName] = useState("");
-    const [search, setSearch] = useState("");
-    const [draft, setDraft] = useState(emptyDraft);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const savingRef = useRef(false);
-    const [error, setError] = useState("");
-    const [retry, setRetry] = useState(0);
-
-    useEffect(() => {
-        let active = true;
-        const request = category ? api.items(category.id) : api.categories();
-        request
-            .then((result) => {
-                if (!active) return;
-                if (category) setMasterItems(result as MasterItem[]);
-                else setCategories(result as Category[]);
-            })
-            .catch((reason: unknown) => {
-                if (active)
-                    setError(
-                        reason instanceof Error
-                            ? reason.message
-                            : "Unable to load items.",
-                    );
-            })
-            .finally(() => {
-                if (active) setLoading(false);
-            });
-        return () => {
-            active = false;
-        };
-    }, [category, retry]);
-
-    const filtered = useMemo(
-        () =>
-            masterItems.filter((item) =>
-                item.name.toLowerCase().includes(search.trim().toLowerCase()),
-            ),
-        [masterItems, search],
-    );
-    const goBack = () => {
-        if (savingRef.current) return;
-        setError("");
-        if (step === 4 || step === 1) {
-            if (router.canGoBack()) router.back();
-            else router.replace("/(tabs)");
-        } else if (step === 3) setStep(2);
-        else if (custom) setCustom(false);
+  const c = useThemeColors();
+  const params = useLocalSearchParams<{ category?: string }>();
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [category, setCategory] = useState<Category | null>(null);
+  const [masters, setMasters] = useState<MasterItem[]>([]);
+  const [master, setMaster] = useState<MasterItem | null>(null);
+  const [custom, setCustom] = useState(false);
+  const [step, setStep] = useState(1);
+  const [name, setName] = useState("");
+  const [search, setSearch] = useState("");
+  const [draft, setDraft] = useState(blank);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const lock = useRef(false);
+  const initialCategory = useRef(false);
+  const [created, setCreated] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    (category ? api.items(category.id) : api.categories())
+      .then((result) => {
+        if (!active) return;
+        if (category) setMasters(result as MasterItem[]);
         else {
-            setStep(1);
-            setLoading(true);
-            setCategory(null);
-        }
-    };
-    useEffect(() => {
-        const listener = BackHandler.addEventListener(
-            "hardwareBackPress",
-            () => {
-                goBack();
-                return true;
-            },
-        );
-        return () => listener.remove();
-    });
-    const reset = () => {
-        setLoading(true);
-        setStep(1);
-        setCategory(null);
-        setMasterItem(null);
-        setCustom(false);
-        setItemName("");
-        setSearch("");
-        setDraft(emptyDraft());
-        setError("");
-    };
-    const save = async () => {
-        if (savingRef.current) return;
-        setError("");
-        if (!category || (!masterItem && !itemName.trim())) {
-            setError("Enter an item name.");
-            return;
-        }
-        if (draft.expiryType !== "NEVER" && !parseDate(draft.expiryDate)) {
-            setError("Choose a valid date.");
-            return;
-        }
-        if (
-            draft.expiryType === "RECURRING" &&
-            !Object.values(draft.interval).some((value) => value > 0)
-        ) {
-            setError("Enter at least one positive recurrence interval.");
-            return;
-        }
-        savingRef.current = true;
-        setSaving(true);
-        try {
-            await api.createItem({
-                ...(masterItem
-                    ? { miId: masterItem.id }
-                    : { mcId: category.id, itemName: itemName.trim() }),
-                expiryType: draft.expiryType,
-                ...(draft.expiryType !== "NEVER"
-                    ? { expiryDate: draft.expiryDate }
-                    : {}),
-                ...(draft.expiryType === "RECURRING"
-                    ? {
-                          ...(draft.interval.years
-                              ? { recurrenceYears: draft.interval.years }
-                              : {}),
-                          ...(draft.interval.months
-                              ? { recurrenceMonths: draft.interval.months }
-                              : {}),
-                          ...(draft.interval.days
-                              ? { recurrenceDays: draft.interval.days }
-                              : {}),
-                      }
-                    : {}),
-            });
-            setStep(4);
-        } catch (reason: unknown) {
-            setError(
-                reason instanceof Error
-                    ? reason.message
-                    : "Unable to save this item.",
+          setCategories(result as Category[]);
+          if (params.category && !initialCategory.current) {
+            initialCategory.current = true;
+            const match = (result as Category[]).find(
+              (row) => String(row.id) === params.category,
             );
-        } finally {
-            savingRef.current = false;
-            setSaving(false);
+            if (match) {
+              setCategory(match);
+              setStep(2);
+            }
+          }
         }
+      })
+      .catch((reason) => {
+        if (active)
+          setError(
+            reason instanceof Error ? reason.message : "Unable to load catalog",
+          );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
     };
-    const identity = (
-        <Card style={s.identity}>
-            <>
-                {masterItem ? (
-                    <StorageImage path={masterItem.image_path} size={46} />
-                ) : (
-                    <CategoryIcon
-                        name={category?.name}
-                        path={category?.image_path}
-                        size={46}
-                    />
-                )}
-            </>
-            <View style={s.main}>
-                <Text style={s.name}>
-                    {masterItem?.name ?? (itemName.trim() || "Custom item")}
-                </Text>
-                <Text style={s.meta}>
-                    {category?.name}
-                    {!masterItem ? " · Custom" : ""}
-                </Text>
-            </View>
-        </Card>
-    );
-    const footer =
+  }, [category, retry, params.category]);
+  const back = () => {
+    if (lock.current) return;
+    setError("");
+    if (step === 3) {
+      setStep(2);
+      return;
+    }
+    if (step === 2) {
+      setLoading(true);
+      setCategory(null);
+      setCustom(false);
+      setStep(1);
+      return;
+    }
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)");
+  };
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      back();
+      return true;
+    });
+    return () => sub.remove();
+  });
+  async function save() {
+    if (lock.current) return;
+    if (!category || (!master && !name.trim())) {
+      setError("Enter an item name");
+      return;
+    }
+    if (draft.expiryType !== "NEVER" && !parseDate(draft.expiryDate)) {
+      setError("Choose a valid date");
+      return;
+    }
+    if (
+      draft.expiryType === "RECURRING" &&
+      !Object.values(draft.interval).some((n) => n > 0)
+    ) {
+      setError("Choose a positive recurrence interval");
+      return;
+    }
+    lock.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api.createItem({
+        ...draftInput(draft),
+        ...(master
+          ? { miId: master.id }
+          : { mcId: category.id, itemName: name.trim() }),
+      });
+      setCreated(result.id);
+      setStep(4);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Unable to save this item",
+      );
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  }
+  return (
+    <Screen
+      title={
+        step === 1
+          ? "Add item"
+          : step === 2
+            ? category?.name
+            : step === 3
+              ? "New item"
+              : " "
+      }
+      onBack={step < 4 ? back : undefined}
+      footer={
         step === 3 ? (
-            <Button
-                title={saving ? "Saving..." : "Save item"}
-                onPress={save}
-                disabled={saving}
-            />
-        ) : step === 2 && custom ? (
-            <Button
-                title="Continue"
+          <Button
+            title={busy ? "Creating…" : "Create item"}
+            disabled={busy}
+            onPress={() => void save()}
+          />
+        ) : undefined
+      }
+    >
+      <Feedback
+        loading={loading}
+        error={step < 3 ? error : ""}
+        retry={() => {
+          setLoading(true);
+          setError("");
+          setRetry((n) => n + 1);
+        }}
+      />
+      {step === 1 && !loading && !error ? (
+        <>
+          <Text
+            style={{
+              fontSize: 14,
+              fontWeight: "600",
+              color: c.text,
+              marginVertical: 14,
+            }}
+          >
+            Choose a category
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
+            {categories.map((row) => (
+              <Pressable
+                key={row.id}
+                accessibilityRole="button"
                 onPress={() => {
-                    if (!itemName.trim()) {
-                        setError("Enter an item name.");
-                        return;
-                    }
-                    setError("");
-                    setStep(3);
+                  setLoading(true);
+                  setError("");
+                  setCategory(row);
+                  setStep(2);
+                  setCustom(false);
+                  setSearch("");
+                  setMasters([]);
                 }}
-            />
-        ) : undefined;
-
-    return (
-        <Screen
-            title={step < 4 ? "Add Item" : undefined}
-            onBack={step < 4 ? goBack : undefined}
-            footer={footer}
-        >
-            {step < 4 ? (
-                <View style={s.steps}>
-                    {["Category", "Item", "Details"].map((label, index) => (
-                        <View key={label} style={s.step}>
-                            {index < 2 ? (
-                                <View
-                                    style={[
-                                        s.line,
-                                        step > index + 1 && {
-                                            backgroundColor: colors.accentDark,
-                                        },
-                                    ]}
-                                />
-                            ) : null}
-                            <View
-                                style={[
-                                    s.circle,
-                                    step >= index + 1 && s.circleActive,
-                                ]}
-                            >
-                                <Text
-                                    style={[
-                                        s.stepNumber,
-                                        step >= index + 1 && {
-                                            color: colors.onAccent,
-                                        },
-                                    ]}
-                                >
-                                    {index + 1}
-                                </Text>
-                            </View>
-                            <Text
-                                style={[
-                                    s.stepLabel,
-                                    step >= index + 1 && {
-                                        color: colors.accent,
-                                    },
-                                ]}
-                            >
-                                {label}
-                            </Text>
-                        </View>
-                    ))}
-                </View>
-            ) : null}
-            {step === 1 ? (
-                <>
-                    <Text style={s.title}>What are you tracking?</Text>
-                    <Text style={s.help}>
-                        Pick a category. You can choose a ready-made item or add
-                        your own.
-                    </Text>
-                    {categories.map((item) => (
-                        <Pressable
-                            key={String(item.id)}
-                            accessibilityRole="button"
-                            onPress={() => {
-                                setLoading(true);
-                                setCategory(item);
-                                setMasterItems([]);
-                                setMasterItem(null);
-                                setItemName("");
-                                setSearch("");
-                                setCustom(false);
-                                setDraft(emptyDraft());
-                                setError("");
-                                setStep(2);
-                            }}
-                            style={({ pressed }) => [
-                                s.category,
-                                pressed && s.pressed,
-                            ]}
-                        >
-                            <CategoryIcon
-                                name={item.name}
-                                path={item.image_path}
-                                size={46}
-                            />
-                            <View style={s.main}>
-                                <Text style={s.name}>{item.name}</Text>
-                                <Text style={s.meta}>
-                                    {descriptions[item.name]}
-                                </Text>
-                            </View>
-                        </Pressable>
-                    ))}
-                </>
-            ) : null}
-            {step === 2 && !custom ? (
-                <>
-                    <View style={s.titleRow}>
-                        <Text style={s.title}>Pick an item</Text>
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="Change category"
-                            onPress={() => {
-                                setLoading(true);
-                                setCategory(null);
-                                setStep(1);
-                            }}
-                            style={s.chip}
-                        >
-                            <CategoryIcon
-                                name={category?.name}
-                                path={category?.image_path}
-                                size={22}
-                            />
-                            <Text style={s.chipText}>{category?.name}</Text>
-                            <ChevronRight size={14} color={colors.warning} />
-                        </Pressable>
-                    </View>
-                    <View style={s.search}>
-                        <Search color={colors.muted} size={16} />
-                        <TextInput
-                            style={s.searchInput}
-                            placeholder="Search items..."
-                            accessibilityLabel="Search items"
-                            placeholderTextColor={colors.muted}
-                            value={search}
-                            onChangeText={setSearch}
-                        />
-                    </View>
-                    {filtered.map((item) => (
-                        <Pressable
-                            key={String(item.id)}
-                            accessibilityRole="button"
-                            onPress={() => {
-                                setMasterItem(item);
-                                setCustom(false);
-                                setItemName(item.name);
-                                setError("");
-                                setStep(3);
-                            }}
-                            style={({ pressed }) => [
-                                s.category,
-                                pressed && s.pressed,
-                            ]}
-                        >
-                            <StorageImage path={item.image_path} size={40} />
-                            <Text style={[s.name, s.main]}>{item.name}</Text>
-                            <ChevronRight size={18} color={colors.muted} />
-                        </Pressable>
-                    ))}
-                    {!loading && !error && !filtered.length ? (
-                        <Text style={s.help}>
-                            {search
-                                ? "No items match your search."
-                                : "No ready-made items in this category."}
-                        </Text>
-                    ) : null}
-                    <Pressable
-                        accessibilityRole="button"
-                        style={s.custom}
-                        onPress={() => {
-                            setMasterItem(null);
-                            setItemName("");
-                            setCustom(true);
-                            setError("");
-                        }}
-                    >
-                        <CategoryIcon
-                            name={category?.name}
-                            path={category?.image_path}
-                            size={48}
-                        />
-                        <View style={s.main}>
-                            <Text style={s.name}>Add custom item</Text>
-                            <Text style={s.meta}>
-                                Uses the ‘{category?.name}’ icon automatically
-                            </Text>
-                        </View>
-                    </Pressable>
-                </>
-            ) : null}
-            {step === 2 && custom ? (
-                <Card>
-                    <Text style={s.title}>Custom item</Text>
-                    {identity}
-                    <Input
-                        label="Item name"
-                        value={itemName}
-                        onChangeText={setItemName}
-                        maxLength={100}
-                    />
-                    <View style={s.info}>
-                        <Info size={16} color={colors.muted} />
-                        <Text style={s.infoText}>
-                            The icon follows the category you picked, so custom
-                            items always look consistent with the rest.
-                        </Text>
-                    </View>
-                </Card>
-            ) : null}
-            {step === 3 ? (
-                <>
-                    {identity}
-                    <ExpiryFields value={draft} onChange={setDraft} />
-                </>
-            ) : null}
-            {step === 4 ? (
-                <View style={s.success}>
-                    <View style={s.successIcon}>
-                        {[
-                            [-22, -12],
-                            [10, -32],
-                            [58, -24],
-                            [115, -10],
-                            [-30, 38],
-                            [126, 40],
-                            [-13, 99],
-                            [112, 95],
-                            [50, 122],
-                        ].map(([left, top], index) => (
-                            <View
-                                key={index}
-                                style={{
-                                    position: "absolute",
-                                    left,
-                                    top,
-                                    width: 5,
-                                    height: 7,
-                                    backgroundColor: [
-                                        colors.accent,
-                                        colors.warning,
-                                        colors.danger,
-                                    ][index % 3],
-                                    transform: [{ rotate: "40deg" }],
-                                }}
-                            />
-                        ))}
-                        <Check
-                            color={colors.onAccent}
-                            size={64}
-                            strokeWidth={3}
-                        />
-                    </View>
-                    <Text style={s.successTitle}>Item added</Text>
-                    <Text style={s.successText}>
-                        {itemName.trim()} has been successfully added to your
-                        items.
-                    </Text>
-                    <View style={s.successButtons}>
-                        <Button title="Add another item" onPress={reset} />
-                        <Button
-                            title="Go to items"
-                            variant="secondary"
-                            onPress={() => router.replace("/(tabs)/items")}
-                        />
-                    </View>
-                </View>
-            ) : null}
-            {loading && step < 3 && !custom ? (
-                <ActivityIndicator color={colors.accent} />
-            ) : null}
-            {error ? (
-                <Pressable
+                style={({ pressed }) => ({
+                  width: "48%",
+                  flexGrow: 1,
+                  minHeight: 86,
+                  borderRadius: 17,
+                  backgroundColor: c.accentTint,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: 14,
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <StorageImage uri={row.image_url} size={32} />
+                <Text
+                  style={{
+                    color: c.text,
+                    fontSize: 13,
+                    fontWeight: "600",
+                    flexShrink: 1,
+                  }}
+                >
+                  {row.name}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Feedback
+            empty={!categories.length}
+            title="No categories available"
+            message="Pull up this screen again after the catalog is available."
+          />
+        </>
+      ) : null}
+      {step === 2 && !loading && !error ? (
+        <>
+          {!custom ? (
+            <>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                  backgroundColor: c.surface2,
+                  borderRadius: 13,
+                  paddingHorizontal: 12,
+                  marginVertical: 16,
+                }}
+              >
+                <Search size={17} color={c.muted} />
+                <TextInput
+                  accessibilityLabel="Search catalog"
+                  value={search}
+                  onChangeText={setSearch}
+                  placeholder="Search items…"
+                  placeholderTextColor={c.muted}
+                  style={{ flex: 1, minHeight: 48, color: c.text }}
+                />
+              </View>
+              {masters
+                .filter((row) =>
+                  row.name.toLowerCase().includes(search.trim().toLowerCase()),
+                )
+                .map((row) => (
+                  <Pressable
+                    key={row.id}
                     accessibilityRole="button"
                     onPress={() => {
-                        if (step < 3 && !custom) {
-                            setLoading(true);
-                            setError("");
-                            setRetry((n) => n + 1);
-                        }
+                      setMaster(row);
+                      setName(row.name);
+                      setDraft({
+                        ...blank(),
+                        expiryType: row.expiry_type ?? "ONCE",
+                        expiryDate: row.expiry_date ?? "",
+                        interval: {
+                          years: row.recurrence_years ?? 0,
+                          months: row.recurrence_months ?? 0,
+                          days: row.recurrence_days ?? 0,
+                        },
+                        renewalMode: row.renewal_mode ?? "AUTOMATIC",
+                      });
+                      setStep(3);
                     }}
-                >
-                    <Text selectable accessibilityRole="alert" style={s.error}>
-                        {error}
-                        {step < 3 && !custom ? " Tap to retry." : ""}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 14,
+                      minHeight: 75,
+                      borderBottomWidth: 0.5,
+                      borderColor: c.border,
+                    }}
+                  >
+                    <StorageImage
+                      uri={row.image_url}
+                      fallbackUri={
+                        row.category_image_url ?? category?.image_url
+                      }
+                      size={42}
+                    />
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: c.text,
+                        fontSize: 15,
+                        fontWeight: "500",
+                      }}
+                    >
+                      {row.name}
                     </Text>
-                </Pressable>
-            ) : null}
-        </Screen>
-    );
+                    <ChevronRight size={18} color={c.muted} />
+                  </Pressable>
+                ))}
+              <Feedback
+                empty={
+                  !masters.filter((row) =>
+                    row.name.toLowerCase().includes(search.toLowerCase()),
+                  ).length
+                }
+                title="Create something personal"
+                message="Add a custom item in this category."
+              />
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setCustom(true);
+                  setMaster(null);
+                  setName("");
+                  setDraft(blank());
+                }}
+                style={{
+                  minHeight: 52,
+                  borderRadius: 14,
+                  backgroundColor: c.accentTint,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 9,
+                  marginTop: 20,
+                }}
+              >
+                <Plus size={18} color={c.accentDark} />
+                <Text style={{ color: c.accentDark, fontWeight: "600" }}>
+                  Create custom item
+                </Text>
+              </Pressable>
+            </>
+          ) : (
+            <View style={{ marginTop: 24 }}>
+              <StorageImage uri={category?.image_url} size={64} />
+              <Text
+                style={{
+                  fontSize: 24,
+                  fontWeight: "700",
+                  color: c.text,
+                  marginVertical: 20,
+                }}
+              >
+                Your own {category?.name.toLowerCase()} item
+              </Text>
+              <Input
+                label="Item name"
+                value={name}
+                onChangeText={setName}
+                maxLength={100}
+              />
+              <Text
+                style={{
+                  color: c.muted,
+                  fontSize: 13,
+                  lineHeight: 21,
+                  marginBottom: 20,
+                }}
+              >
+                Your item automatically uses the {category?.name} category
+                image.
+              </Text>
+              <Button
+                title="Continue"
+                disabled={!name.trim()}
+                onPress={() => setStep(3)}
+              />
+            </View>
+          )}
+        </>
+      ) : null}
+      {step === 3 ? (
+        <>
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 14,
+              alignItems: "center",
+              marginVertical: 18,
+            }}
+          >
+            <StorageImage
+              uri={master?.image_url ?? category?.image_url}
+              fallbackUri={category?.image_url}
+              size={52}
+            />
+            <View>
+              <Text style={{ color: c.text, fontSize: 17, fontWeight: "700" }}>
+                {name}
+              </Text>
+              <Text style={{ color: c.muted, fontSize: 13, marginTop: 5 }}>
+                {category?.name}
+                {!master ? " · Custom item" : ""}
+              </Text>
+            </View>
+          </View>
+          <ExpiryFields value={draft} onChange={setDraft} />
+          {error ? (
+            <Text
+              accessibilityRole="alert"
+              style={{ color: c.danger, marginVertical: 16, lineHeight: 21 }}
+            >
+              {error}
+            </Text>
+          ) : null}
+        </>
+      ) : null}
+      {step === 4 ? (
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            alignItems: "center",
+            paddingVertical: 65,
+          }}
+        >
+          <View
+            style={{
+              padding: 24,
+              borderRadius: 48,
+              backgroundColor: c.accentTint,
+            }}
+          >
+            <Check color={c.accentDark} size={52} />
+          </View>
+          <Text
+            style={{
+              color: c.text,
+              fontSize: 28,
+              fontWeight: "700",
+              marginTop: 26,
+            }}
+          >
+            You’re all set.
+          </Text>
+          <Text
+            style={{
+              color: c.muted,
+              fontSize: 15,
+              textAlign: "center",
+              lineHeight: 23,
+              marginVertical: 16,
+            }}
+          >
+            {name} is now in your items.
+          </Text>
+          <View style={{ alignSelf: "stretch", marginTop: 25 }}>
+            <Button
+              title="View item"
+              onPress={() =>
+                router.replace({
+                  pathname: "/item/[id]",
+                  params: { id: created! },
+                })
+              }
+            />
+            <Button
+              title="Go to my items"
+              variant="secondary"
+              onPress={() => router.replace("/(tabs)/items")}
+            />
+          </View>
+        </View>
+      ) : null}
+    </Screen>
+  );
 }
-const createStyles = (colors: Palette) =>
-    StyleSheet.create({
-        steps: { flexDirection: "row", marginBottom: 24, paddingHorizontal: 6 },
-        step: { flex: 1, alignItems: "center" },
-        line: {
-            position: "absolute",
-            top: 13,
-            left: "50%",
-            width: "100%",
-            height: 1,
-            backgroundColor: colors.border,
-        },
-        circle: {
-            height: 26,
-            width: 26,
-            borderRadius: 13,
-            borderWidth: 1,
-            borderColor: colors.muted,
-            backgroundColor: colors.bg,
-            alignItems: "center",
-            justifyContent: "center",
-        },
-        circleActive: {
-            backgroundColor: colors.accent,
-            borderColor: colors.accent,
-        },
-        stepNumber: { color: colors.muted, fontSize: 12, fontWeight: "700" },
-        stepLabel: { color: colors.muted, fontSize: 12, marginTop: 6 },
-        title: {
-            color: colors.text,
-            fontSize: 19,
-            fontWeight: "700",
-            marginBottom: 8,
-        },
-        help: {
-            color: colors.muted,
-            fontSize: 14,
-            lineHeight: 21,
-            marginBottom: 14,
-        },
-        category: {
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 12,
-            backgroundColor: colors.surface,
-            padding: 10,
-            borderRadius: 8,
-            marginBottom: 8,
-        },
-        main: { flex: 1 },
-        name: { color: colors.text, fontSize: 14, fontWeight: "600" },
-        meta: {
-            color: colors.muted,
-            fontSize: 12,
-            marginTop: 4,
-            lineHeight: 17,
-        },
-        pressed: { backgroundColor: colors.accentTint },
-        titleRow: {
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-            marginBottom: 6,
-        },
-        chip: {
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 3,
-            padding: 5,
-            borderRadius: 6,
-            backgroundColor: colors.surface,
-        },
-        chipText: { color: colors.warning, fontSize: 11 },
-        search: {
-            flexDirection: "row",
-            gap: 8,
-            alignItems: "center",
-            paddingHorizontal: 10,
-            minHeight: 44,
-            borderRadius: 8,
-            backgroundColor: colors.surface,
-            borderWidth: 1,
-            borderColor: colors.border,
-            marginBottom: 12,
-        },
-        searchInput: {
-            flex: 1,
-            color: colors.text,
-            fontSize: 13,
-            paddingVertical: 10,
-        },
-        custom: {
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 12,
-            padding: 12,
-            borderRadius: 8,
-            borderWidth: 1,
-            borderColor: colors.border,
-            marginTop: 4,
-        },
-        identity: {
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 12,
-            marginBottom: 18,
-            padding: 10,
-        },
-        info: { flexDirection: "row", gap: 6 },
-        infoText: {
-            flex: 1,
-            color: colors.muted,
-            fontSize: 12,
-            lineHeight: 18,
-        },
-        success: {
-            flex: 1,
-            justifyContent: "center",
-            alignItems: "center",
-            paddingVertical: 40,
-        },
-        successIcon: {
-            width: 100,
-            height: 100,
-            borderRadius: 50,
-            backgroundColor: colors.accent,
-            alignItems: "center",
-            justifyContent: "center",
-            marginBottom: 30,
-        },
-        successTitle: {
-            color: colors.text,
-            fontSize: 26,
-            fontWeight: "700",
-            marginBottom: 12,
-        },
-        successText: {
-            color: colors.muted,
-            textAlign: "center",
-            fontSize: 15,
-            lineHeight: 23,
-        },
-        successButtons: { alignSelf: "stretch", marginTop: 26 },
-        error: {
-            color: colors.danger,
-            fontSize: 13,
-            marginTop: 16,
-            lineHeight: 20,
-        },
-    });

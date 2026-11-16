@@ -1,170 +1,202 @@
-import { useThemeColors } from "@/context/preferences";
-import { useMemo, useState } from "react";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import { useMemo, useState, useEffect } from "react";
 import {
-    ActivityIndicator,
-    FlatList,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  FlatList,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
-import { ListFilter, Search } from "lucide-react-native";
+import { Search } from "lucide-react-native";
 import { Screen } from "@/components/ui";
-import { ItemRow, itemDueDate } from "@/components/item-row";
+import { Feedback } from "@/components/feedback";
+import { ItemRow } from "@/components/item-row";
 import { useTrackedItems } from "@/hooks/use-tracked-items";
-import type { Palette } from "@/constants/theme";
-import { daysUntil } from "@/utils/item-dates";
-
-const filters = ["All", "Active", "Expired", "No Expiry"] as const;
+import { useThemeColors } from "@/context/preferences";
+import { api } from "@/services/api";
+import type { Category } from "@/types/models";
+const filters = [
+  "All",
+  "Overdue",
+  "Due soon",
+  "Upcoming",
+  "No expiry",
+] as const;
 export default function Items() {
-    const colors = useThemeColors();
-    const s = createStyles(colors);
-    const { items, loading, error, reload } = useTrackedItems();
-    const [query, setQuery] = useState("");
-    const [filter, setFilter] = useState<(typeof filters)[number]>("All");
-    const data = useMemo(
-        () =>
-            items
-                .filter((item) => {
-                    if (
-                        !item.item_name
-                            .toLowerCase()
-                            .includes(query.trim().toLowerCase())
+  const c = useThemeColors();
+  const params = useLocalSearchParams<{ category?: string }>();
+  const { items, loading, error, reload } = useTrackedItems();
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<string>("All");
+  const category = params.category ?? "All";
+  const setCategory = (value: string) => router.setParams({ category: value });
+  const [categories, setCategories] = useState<Category[]>([]);
+
+  useEffect(() => {
+    api
+      .categories()
+      .then(setCategories)
+      .catch(() => {});
+  }, []);
+  const data = useMemo(
+    () =>
+      items
+        .filter(
+          (item) =>
+            item.item_name
+              .toLowerCase()
+              .includes(search.trim().toLowerCase()) &&
+            (category === "All" || String(item.mc_id) === category) &&
+            (filter === "All" ||
+              (filter === "Overdue"
+                ? item.expiration_status === "OVERDUE"
+                : filter === "Due soon"
+                  ? ["DUE_TODAY", "EXPIRING_SOON"].includes(
+                      item.expiration_status,
                     )
-                        return false;
-                    const due = itemDueDate(item);
-                    return (
-                        filter === "All" ||
-                        (filter === "No Expiry"
-                            ? item.expiry_type === "NEVER"
-                            : filter === "Expired"
-                              ? !!due && daysUntil(due) < 0
-                              : item.expiry_type !== "NEVER" &&
-                                !!due &&
-                                daysUntil(due) >= 0)
-                    );
-                })
-                .sort((a, b) =>
-                    (itemDueDate(a) ?? "9999").localeCompare(
-                        itemDueDate(b) ?? "9999",
-                    ),
+                  : filter === "No expiry"
+                    ? item.expiry_type === "NEVER"
+                    : item.expiration_status === "UPCOMING")),
+        )
+        .sort((a, b) =>
+          (a.effective_expiry_date ?? "9999").localeCompare(
+            b.effective_expiry_date ?? "9999",
+          ),
+        ),
+    [items, search, category, filter],
+  );
+  return (
+    <Screen title="My items" scroll={false}>
+      <FlatList
+        data={loading || error ? [] : data}
+        keyExtractor={(item) => item.id}
+        refreshing={loading}
+        onRefresh={reload}
+        contentContainerStyle={{
+          padding: 22,
+          paddingTop: 10,
+          maxWidth: 640,
+          width: "100%",
+          alignSelf: "center",
+          flexGrow: 1,
+        }}
+        keyboardShouldPersistTaps="handled"
+        renderItem={({ item }) => (
+          <ItemRow
+            item={item}
+            onPress={() =>
+              router.push({ pathname: "/item/[id]", params: { id: item.id } })
+            }
+          />
+        )}
+        ListHeaderComponent={
+          <>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 10,
+                backgroundColor: c.surface2,
+                borderRadius: 14,
+                paddingHorizontal: 14,
+                marginBottom: 14,
+              }}
+            >
+              <Search size={17} color={c.muted} />
+              <TextInput
+                accessibilityLabel="Search items"
+                placeholder="Search items…"
+                placeholderTextColor={c.muted}
+                value={search}
+                onChangeText={setSearch}
+                style={{ color: c.text, flex: 1, minHeight: 48, fontSize: 14 }}
+              />
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 7, paddingBottom: 14 }}
+            >
+              {filters.map((option) => (
+                <Pressable
+                  key={option}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: filter === option }}
+                  onPress={() => setFilter(option)}
+                  style={{
+                    backgroundColor: filter === option ? c.accent : c.surface2,
+                    paddingHorizontal: 14,
+                    minHeight: 38,
+                    borderRadius: 20,
+                    justifyContent: "center",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: filter === option ? "white" : c.muted,
+                      fontSize: 12,
+                      fontWeight: "600",
+                    }}
+                  >
+                    {option}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 8, paddingBottom: 12 }}
+            >
+              {[{ id: "All", name: "All categories" }, ...categories].map(
+                (entry) => (
+                  <Pressable
+                    key={entry.id}
+                    accessibilityRole="button"
+                    onPress={() => setCategory(String(entry.id))}
+                    style={{
+                      borderBottomWidth: category === String(entry.id) ? 2 : 0,
+                      borderColor: c.accent,
+                      padding: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        color:
+                          category === String(entry.id)
+                            ? c.accentDark
+                            : c.muted,
+                      }}
+                    >
+                      {entry.name}
+                    </Text>
+                  </Pressable>
                 ),
-        [filter, items, query],
-    );
-    return (
-        <Screen title="My Items" scroll={false}>
-            <FlatList
-                data={data}
-                contentContainerStyle={s.content}
-                keyboardShouldPersistTaps="handled"
-                keyExtractor={(item) => String(item.id)}
-                refreshing={loading}
-                onRefresh={reload}
-                renderItem={({ item }) => (
-                    <ItemRow
-                        item={item}
-                        onPress={() =>
-                            router.push({
-                                pathname: "/item/[id]",
-                                params: { id: String(item.id) },
-                            })
-                        }
-                    />
-                )}
-                ListHeaderComponent={
-                    <>
-                        <View style={s.search}>
-                            <Search color={colors.muted} size={17} />
-                            <TextInput
-                                accessibilityLabel="Search items"
-                                placeholder="Search items..."
-                                placeholderTextColor={colors.muted}
-                                value={query}
-                                onChangeText={setQuery}
-                                style={s.input}
-                            />
-                            <ListFilter color={colors.muted} size={17} />
-                        </View>
-                        <View style={s.filters}>
-                            {filters.map((option) => (
-                                <Pressable
-                                    key={option}
-                                    accessibilityRole="tab"
-                                    accessibilityState={{
-                                        selected: option === filter,
-                                    }}
-                                    onPress={() => setFilter(option)}
-                                    style={[
-                                        s.filter,
-                                        filter === option && s.active,
-                                    ]}
-                                >
-                                    <Text
-                                        style={[
-                                            s.filterText,
-                                            filter === option && s.activeText,
-                                        ]}
-                                    >
-                                        {option}
-                                    </Text>
-                                </Pressable>
-                            ))}
-                        </View>
-                        {error ? (
-                            <Pressable onPress={reload}>
-                                <Text selectable style={s.error}>
-                                    {error} Tap to retry.
-                                </Text>
-                            </Pressable>
-                        ) : null}
-                    </>
-                }
-                ListEmptyComponent={
-                    loading ? (
-                        <ActivityIndicator color={colors.accent} />
-                    ) : !error ? (
-                        <Text style={s.empty}>No items match this filter.</Text>
-                    ) : null
-                }
-            />
-        </Screen>
-    );
+              )}
+            </ScrollView>
+          </>
+        }
+        ListEmptyComponent={
+          <Feedback
+            loading={loading}
+            error={error}
+            retry={reload}
+            empty={!loading && !error}
+            title={
+              search || filter !== "All" || category !== "All"
+                ? "No matching items"
+                : "Your dates, all in one place"
+            }
+            message={
+              search || filter !== "All" || category !== "All"
+                ? "Try a different search or filter."
+                : "Use the + button to track your first item."
+            }
+          />
+        }
+      />
+    </Screen>
+  );
 }
-const createStyles = (colors: Palette) =>
-    StyleSheet.create({
-        content: { flexGrow: 1, padding: 16, paddingTop: 8 },
-        search: {
-            minHeight: 44,
-            borderRadius: 8,
-            borderWidth: 1,
-            borderColor: colors.border,
-            backgroundColor: colors.surface,
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: 10,
-            gap: 8,
-        },
-        input: {
-            flex: 1,
-            color: colors.text,
-            fontSize: 14,
-            paddingVertical: 10,
-        },
-        filters: { flexDirection: "row", gap: 6, marginVertical: 14 },
-        filter: {
-            flex: 1,
-            minHeight: 44,
-            justifyContent: "center",
-            alignItems: "center",
-            backgroundColor: colors.surface,
-            borderRadius: 7,
-            paddingHorizontal: 5,
-        },
-        filterText: { color: colors.muted, fontSize: 12 },
-        active: { backgroundColor: colors.accent },
-        activeText: { color: colors.onAccent, fontWeight: "700" },
-        empty: { color: colors.muted, textAlign: "center", marginTop: 40 },
-        error: { color: colors.danger, marginBottom: 12 },
-    });

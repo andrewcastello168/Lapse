@@ -1,18 +1,13 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import { describe, it, expect, vi } from 'vitest';
 import { CategoriesController } from './categories.controller.js';
-
+import { CategoriesService } from './categories.service.js';
 describe('CategoriesController', () => {
-  let controller: CategoriesController;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [CategoriesController],
-    }).compile();
-
-    controller = module.get<CategoriesController>(CategoriesController);
-  });
-
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
+  it('preserves catalog response envelopes', async () => {
+    const rows = [{ id: 1, name: 'Catalog' }];
+    const service = { findAll: vi.fn().mockResolvedValue(rows) };
+    const controller = new CategoriesController(
+      service as unknown as CategoriesService,
+    );
+    expect(await controller.findAll()).toEqual(rows);
   });
 });

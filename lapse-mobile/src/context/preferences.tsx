@@ -1,112 +1,140 @@
 import {
-    createContext,
-    useContext,
-    useEffect,
-    useState,
-    type ReactNode,
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
 } from "react";
 import { Platform, useColorScheme } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { colors, lightColors, type Palette } from "@/constants/theme";
 import { useAuth } from "@/context/auth";
-
-type Mode = "System" | "Light" | "Dark";
-type Preferences = { mode: Mode; notifications: boolean[] };
+import { setApiTimezone } from "@/services/api";
+export type Mode = "System" | "Light" | "Dark";
+export type Preferences = {
+  mode: Mode;
+  remindersEnabled: boolean;
+  reminderOffset: 1 | 3 | 7 | 30;
+  reminderHour: number;
+  timezone: string;
+};
 const defaults: Preferences = {
-    mode: "Dark",
-    notifications: [true, true, true, false],
+  mode: "Light",
+  remindersEnabled: true,
+  reminderOffset: 7,
+  reminderHour: 9,
+  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 };
 const Context = createContext({
-    ...defaults,
-    colors: colors as Palette,
-    dark: true,
-    setMode: (_mode: Mode) => {},
-    setNotification: (_index: number, _enabled: boolean) => {},
+  ...defaults,
+  ready: false,
+  colors: lightColors as Palette,
+  dark: false,
+  update: (_value: Partial<Preferences>) => {},
 });
-
 export function PreferencesProvider({ children }: { children: ReactNode }) {
-    const { user } = useAuth();
-    const storageKey = `lapse.preferences.${user?.id ?? "guest"}`;
-    return (
-        <UserPreferences key={storageKey} storageKey={storageKey}>
-            {children}
-        </UserPreferences>
-    );
+  const { user } = useAuth();
+  const key = `lapse.preferences.${user?.id ?? "guest"}`;
+  return (
+    <UserPreferences key={key} storageKey={key}>
+      {children}
+    </UserPreferences>
+  );
 }
 function UserPreferences({
-    children,
-    storageKey: key,
+  children,
+  storageKey,
 }: {
-    children: ReactNode;
-    storageKey: string;
+  children: ReactNode;
+  storageKey: string;
 }) {
-    const systemScheme = useColorScheme();
-    const [preferences, setPreferences] = useState(defaults);
-    const [loadedKey, setLoadedKey] = useState("");
-    useEffect(() => {
-        let active = true;
-        const read =
-            Platform.OS === "web"
-                ? Promise.resolve(globalThis.localStorage?.getItem(key))
-                : SecureStore.getItemAsync(key);
-        read.then((raw) => {
-            if (!active) return;
-            if (raw) {
-                try {
-                    const value = JSON.parse(raw) as Preferences;
-                    if (
-                        ["System", "Light", "Dark"].includes(value.mode) &&
-                        value.notifications?.length === 4 &&
-                        value.notifications.every((v) => typeof v === "boolean")
-                    )
-                        setPreferences(value);
-                } catch {
-                    /* Invalid preferences fall back to the reference's dark default. */
-                }
-            }
-        })
-            .catch(() => {})
-            .finally(() => {
-                if (active) setLoadedKey(key);
-            });
-        return () => {
-            active = false;
-        };
-    }, [key]);
-    useEffect(() => {
-        if (loadedKey !== key) return;
-        const serialized = JSON.stringify(preferences);
-        if (Platform.OS === "web") {
-            try {
-                globalThis.localStorage?.setItem(key, serialized);
-            } catch {
-                /* Keep the in-memory preference if storage is unavailable. */
-            }
-        } else void SecureStore.setItemAsync(key, serialized).catch(() => {});
-    }, [key, loadedKey, preferences]);
-    const dark =
-        preferences.mode === "Dark" ||
-        (preferences.mode === "System" && systemScheme !== "light");
-    return (
-        <Context.Provider
-            value={{
-                ...preferences,
-                dark,
-                colors: dark ? colors : lightColors,
-                setMode: (mode) =>
-                    setPreferences((current) => ({ ...current, mode })),
-                setNotification: (index, enabled) =>
-                    setPreferences((current) => ({
-                        ...current,
-                        notifications: current.notifications.map((v, i) =>
-                            i === index ? enabled : v,
-                        ),
-                    })),
-            }}
-        >
-            {children}
-        </Context.Provider>
-    );
+  const { user } = useAuth();
+  const [initialZone] = useState(user?.timezone ?? defaults.timezone);
+  const scheme = useColorScheme();
+  const [value, setValue] = useState<Preferences>({
+    ...defaults,
+    timezone: user?.timezone ?? defaults.timezone,
+  });
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let active = true;
+    const read =
+      Platform.OS === "web"
+        ? Promise.resolve(globalThis.localStorage?.getItem(storageKey))
+        : SecureStore.getItemAsync(storageKey);
+    read
+      .then((raw) => {
+        if (!active || !raw) return;
+        try {
+          const saved = JSON.parse(raw) as Partial<Preferences> & {
+            notifications?: boolean[];
+          };
+          let zone = saved.timezone ?? initialZone;
+          try {
+            new Intl.DateTimeFormat("en", { timeZone: zone }).format();
+          } catch {
+            zone = defaults.timezone;
+          }
+          setValue({
+            ...defaults,
+            mode: ["System", "Light", "Dark"].includes(saved.mode ?? "")
+              ? saved.mode!
+              : defaults.mode,
+            timezone: zone,
+            remindersEnabled:
+              typeof saved.remindersEnabled === "boolean"
+                ? saved.remindersEnabled
+                : (saved.notifications?.[0] ?? true),
+            reminderOffset: [1, 3, 7, 30].includes(saved.reminderOffset ?? 0)
+              ? saved.reminderOffset!
+              : 7,
+            reminderHour:
+              Number.isInteger(saved.reminderHour) &&
+              saved.reminderHour! >= 0 &&
+              saved.reminderHour! <= 23
+                ? saved.reminderHour!
+                : 9,
+          });
+        } catch {
+          /* Invalid stored settings use validated defaults. */
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setReady(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [storageKey, initialZone]);
+  useEffect(() => {
+    if (!ready) return;
+    setApiTimezone(value.timezone);
+    const serialized = JSON.stringify(value);
+    if (Platform.OS === "web") {
+      try {
+        globalThis.localStorage?.setItem(storageKey, serialized);
+      } catch {
+        /* Preference remains active in memory. */
+      }
+    } else
+      void SecureStore.setItemAsync(storageKey, serialized).catch(() => {});
+  }, [ready, storageKey, value]);
+  const dark =
+    value.mode === "Dark" || (value.mode === "System" && scheme === "dark");
+  return (
+    <Context.Provider
+      value={{
+        ...value,
+        ready,
+        dark,
+        colors: dark ? colors : lightColors,
+        update: (patch) => setValue((current) => ({ ...current, ...patch })),
+      }}
+    >
+      {children}
+    </Context.Provider>
+  );
 }
 export const usePreferences = () => useContext(Context);
 export const useThemeColors = () => usePreferences().colors;

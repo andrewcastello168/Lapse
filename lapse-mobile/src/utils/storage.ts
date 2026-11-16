@@ -1,47 +1,50 @@
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
-import { supabase, storageBucket } from "@/services/supabase";
 import type { AuthSession } from "@/types/models";
-
 const sessionKey = "lapse.auth.session";
-
-export function storageUrl(path?: string | null) {
-    if (!path) {
-        return undefined;
-    }
-    const normalized = path
-        .replace(/^\/+/, "")
-        .replace(/^master-categories-images\//, "master-categories/")
-        .replace(/^master-items-images\//, "master-items/");
-    return supabase.storage.from(storageBucket).getPublicUrl(normalized).data
-        .publicUrl;
+let writes: Promise<void> = Promise.resolve();
+function ordered(work: () => Promise<void>): Promise<void> {
+  writes = writes.catch(() => {}).then(work);
+  return writes;
 }
-
 export async function readSession(): Promise<AuthSession | null> {
-    try {
-        if (Platform.OS === "web") {
-            const value = globalThis.localStorage?.getItem(sessionKey);
-            return value ? (JSON.parse(value) as AuthSession) : null;
-        }
-        const value = await SecureStore.getItemAsync(sessionKey);
-        return value ? (JSON.parse(value) as AuthSession) : null;
-    } catch {
-        return null;
-    }
+  try {
+    await writes.catch(() => {});
+    const raw =
+      Platform.OS === "web"
+        ? globalThis.localStorage?.getItem(sessionKey)
+        : await SecureStore.getItemAsync(sessionKey);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<AuthSession>;
+    if (
+      typeof value.accessToken !== "string" ||
+      typeof value.refreshToken !== "string" ||
+      typeof value.user?.id !== "string" ||
+      typeof value.user.name !== "string" ||
+      typeof value.user.email !== "string"
+    )
+      return null;
+    return value as AuthSession;
+  } catch {
+    return null;
+  }
 }
-
-export async function writeSession(session: AuthSession): Promise<void> {
+export function writeSession(session: AuthSession): Promise<void> {
+  const raw = JSON.stringify(session);
+  return ordered(async () => {
     if (Platform.OS === "web") {
-        globalThis.localStorage?.setItem(sessionKey, JSON.stringify(session));
-        return;
+      globalThis.localStorage?.setItem(sessionKey, raw);
+      return;
     }
-    await SecureStore.setItemAsync(sessionKey, JSON.stringify(session));
+    await SecureStore.setItemAsync(sessionKey, raw);
+  });
 }
-
-export async function clearSession(): Promise<void> {
+export function clearSession(): Promise<void> {
+  return ordered(async () => {
     if (Platform.OS === "web") {
-        globalThis.localStorage?.removeItem(sessionKey);
-        return;
+      globalThis.localStorage?.removeItem(sessionKey);
+      return;
     }
     await SecureStore.deleteItemAsync(sessionKey);
+  });
 }

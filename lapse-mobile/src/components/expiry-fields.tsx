@@ -1,329 +1,443 @@
-import { usePreferences, useThemeColors } from "@/context/preferences";
-import { useState } from "react";
-import { CalendarDays, Info, Minus, Plus } from "lucide-react-native";
+import { useEffect, useState } from "react";
 import {
-    Platform,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  Modal,
+  Platform,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+  ActivityIndicator,
 } from "react-native";
-import { DateTimePicker } from "@expo/ui/community/datetime-picker";
-import type { Palette } from "@/constants/theme";
-import type { ExpiryType } from "@/types/models";
 import {
-    dateOnly,
-    daysUntil,
-    formatDate,
-    nextDueDate,
-    parseDate,
-    type Interval,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  Minus,
+  Plus,
+  X,
+} from "lucide-react-native";
+import { DateTimePicker } from "@expo/ui/community/datetime-picker";
+import { Button } from "@/components/ui";
+import { usePreferences } from "@/context/preferences";
+import {
+  dateOnly,
+  formatDate,
+  intervalLabel,
+  parseDate,
+  type Interval,
 } from "@/utils/item-dates";
-
+import type { ExpiryType, ItemInput, RenewalMode } from "@/types/models";
+import { api } from "@/services/api";
 export type ExpiryDraft = {
-    expiryType: ExpiryType;
-    expiryDate: string;
-    interval: Interval;
+  expiryType: ExpiryType;
+  expiryDate: string;
+  interval: Interval;
+  renewalMode: RenewalMode;
 };
-export function ExpiryFields({
-    value,
-    onChange,
-}: {
-    value: ExpiryDraft;
-    onChange: (value: ExpiryDraft) => void;
-}) {
-    const colors = useThemeColors();
-    const s = createStyles(colors);
-    const { dark } = usePreferences();
-    const [picker, setPicker] = useState(false);
-    const next =
-        value.expiryType === "RECURRING"
-            ? nextDueDate(value.expiryDate, value.interval)
-            : null;
-    const hint =
-        value.expiryType === "NEVER"
-            ? "This item will not have an expiry date and will always be shown in your items under “No Expiry”."
-            : next
-              ? `Based on your input, the next due date will be ${formatDate(next)}.`
-              : value.expiryType === "ONCE" && parseDate(value.expiryDate)
-                ? daysUntil(value.expiryDate) < 0
-                    ? "This item has expired."
-                    : `This item will expire in ${daysUntil(value.expiryDate).toLocaleString()} days.`
-                : "";
-    return (
-        <View>
-            <Text style={s.label}>Expiry type</Text>
-            <View style={s.segments}>
-                {(["ONCE", "RECURRING", "NEVER"] as const).map((type) => (
-                    <Pressable
-                        key={type}
-                        accessibilityRole="radio"
-                        accessibilityState={{
-                            checked: value.expiryType === type,
-                        }}
-                        onPress={() => {
-                            setPicker(false);
-                            onChange({ ...value, expiryType: type });
-                        }}
-                        style={[
-                            s.segment,
-                            value.expiryType === type && s.active,
-                        ]}
-                    >
-                        {value.expiryType === type ? (
-                            <View style={s.radio}>
-                                <View style={s.dot} />
-                            </View>
-                        ) : null}
-                        <Text
-                            style={[
-                                s.segmentText,
-                                value.expiryType === type && {
-                                    color: colors.text,
-                                },
-                            ]}
-                        >
-                            {type === "NEVER"
-                                ? "None"
-                                : type === "ONCE"
-                                  ? "Once"
-                                  : "Recurring"}
-                        </Text>
-                    </Pressable>
-                ))}
-            </View>
-            {value.expiryType === "RECURRING" ? (
-                <>
-                    <Text style={s.label}>Repeat every</Text>
-                    <View style={s.counters}>
-                        {(["years", "months", "days"] as const).map((unit) => (
-                            <View key={unit} style={s.counterGroup}>
-                                <Text style={s.unit}>
-                                    {unit[0].toUpperCase() + unit.slice(1)}
-                                </Text>
-                                <View style={s.counter}>
-                                    <Pressable
-                                        accessibilityRole="button"
-                                        accessibilityLabel={`Decrease ${unit}`}
-                                        disabled={!value.interval[unit]}
-                                        onPress={() =>
-                                            onChange({
-                                                ...value,
-                                                interval: {
-                                                    ...value.interval,
-                                                    [unit]:
-                                                        value.interval[unit] -
-                                                        1,
-                                                },
-                                            })
-                                        }
-                                        style={s.counterButton}
-                                    >
-                                        <Minus color={colors.muted} size={14} />
-                                    </Pressable>
-                                    <TextInput
-                                        accessibilityLabel={unit}
-                                        keyboardType="number-pad"
-                                        style={s.number}
-                                        value={String(value.interval[unit])}
-                                        onChangeText={(text) => {
-                                            if (/^\d{0,3}$/.test(text))
-                                                onChange({
-                                                    ...value,
-                                                    interval: {
-                                                        ...value.interval,
-                                                        [unit]: Number(text),
-                                                    },
-                                                });
-                                        }}
-                                    />
-                                    <Pressable
-                                        accessibilityRole="button"
-                                        accessibilityLabel={`Increase ${unit}`}
-                                        disabled={value.interval[unit] >= 999}
-                                        onPress={() =>
-                                            onChange({
-                                                ...value,
-                                                interval: {
-                                                    ...value.interval,
-                                                    [unit]:
-                                                        value.interval[unit] +
-                                                        1,
-                                                },
-                                            })
-                                        }
-                                        style={s.counterButton}
-                                    >
-                                        <Plus color={colors.accent} size={14} />
-                                    </Pressable>
-                                </View>
-                            </View>
-                        ))}
-                    </View>
-                </>
-            ) : null}
-            {value.expiryType !== "NEVER" ? (
-                <>
-                    <Text style={s.label}>
-                        {value.expiryType === "RECURRING"
-                            ? "Start date (first due date)"
-                            : "Expiry date"}
-                    </Text>
-                    {Platform.OS === "web" ? (
-                        <View style={s.date}>
-                            <TextInput
-                                accessibilityLabel="Date (YYYY-MM-DD)"
-                                placeholder="YYYY-MM-DD"
-                                placeholderTextColor={colors.muted}
-                                style={s.dateText}
-                                value={value.expiryDate}
-                                onChangeText={(expiryDate) =>
-                                    onChange({ ...value, expiryDate })
-                                }
-                            />
-                            <CalendarDays color={colors.muted} size={18} />
-                        </View>
-                    ) : (
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="Choose date"
-                            style={s.date}
-                            onPress={() => setPicker(!picker)}
-                        >
-                            <CalendarDays color={colors.muted} size={18} />
-                            <Text style={s.dateText}>
-                                {formatDate(value.expiryDate) || "Choose date"}
-                            </Text>
-                            <CalendarDays color={colors.muted} size={18} />
-                        </Pressable>
-                    )}
-                    {picker && Platform.OS !== "web" ? (
-                        <DateTimePicker
-                            value={parseDate(value.expiryDate) ?? new Date()}
-                            mode="date"
-                            display={
-                                Platform.OS === "ios" ? "inline" : "default"
-                            }
-                            themeVariant={dark ? "dark" : "light"}
-                            accentColor={colors.accent}
-                            onDismiss={() => setPicker(false)}
-                            onValueChange={(_, date) => {
-                                onChange({
-                                    ...value,
-                                    expiryDate: dateOnly(date),
-                                });
-                                setPicker(false);
-                            }}
-                        />
-                    ) : null}
-                </>
-            ) : null}
-            {hint ? (
-                <View style={s.hint}>
-                    <Info size={18} color={colors.muted} />
-                    <Text style={s.hintText}>{hint}</Text>
-                </View>
-            ) : null}
-        </View>
-    );
+export function draftInput(value: ExpiryDraft): ItemInput {
+  return {
+    expiryType: value.expiryType,
+    ...(value.expiryType !== "NEVER" ? { expiryDate: value.expiryDate } : {}),
+    ...(value.expiryType === "RECURRING"
+      ? {
+          recurrenceYears: value.interval.years,
+          recurrenceMonths: value.interval.months,
+          recurrenceDays: value.interval.days,
+          renewalMode: value.renewalMode,
+        }
+      : {}),
+  };
 }
-const createStyles = (colors: Palette) =>
-    StyleSheet.create({
-        label: {
-            color: colors.text,
-            fontSize: 14,
-            fontWeight: "600",
-            marginBottom: 8,
-        },
-        segments: { flexDirection: "row", gap: 6, marginBottom: 18 },
-        segment: {
+export function ExpiryFields({
+  value,
+  onChange,
+}: {
+  value: ExpiryDraft;
+  onChange: (value: ExpiryDraft) => void;
+}) {
+  const { colors: c, dark, timezone } = usePreferences();
+  const [picker, setPicker] = useState(false);
+  const [repeat, setRepeat] = useState(false);
+  const [interval, setInterval] = useState(value.interval);
+  const [preview, setPreview] = useState("");
+  const inputKey = JSON.stringify([value, timezone]);
+  const [previewKey, setPreviewKey] = useState("");
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    let active = true;
+    if (
+      value.expiryType === "NEVER" ||
+      !parseDate(value.expiryDate) ||
+      (value.expiryType === "RECURRING" &&
+        !Object.values(value.interval).some((n) => n > 0))
+    )
+      return;
+    const timer = setTimeout(() => {
+      setPreviewKey(inputKey);
+      setPreview("");
+      setPending(true);
+      api
+        .preview(draftInput(value), timezone)
+        .then((result) => {
+          if (active)
+            setPreview(
+              result.effective_expiry_date
+                ? `Next due ${formatDate(result.effective_expiry_date)}`
+                : "",
+            );
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (active) setPending(false);
+        });
+    }, 350);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [value, timezone, inputKey]);
+  const label = {
+    color: c.text,
+    fontSize: 13,
+    fontWeight: "600" as const,
+    marginTop: 18,
+    marginBottom: 8,
+  };
+  return (
+    <View>
+      <Text style={label}>Expiration type</Text>
+      <View
+        style={{
+          flexDirection: "row",
+          padding: 4,
+          backgroundColor: c.surface2,
+          borderRadius: 14,
+        }}
+      >
+        {(["ONCE", "RECURRING", "NEVER"] as const).map((type) => (
+          <Pressable
+            key={type}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: value.expiryType === type }}
+            onPress={() => onChange({ ...value, expiryType: type })}
+            style={{
+              flex: 1,
+              minHeight: 40,
+              borderRadius: 11,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor:
+                value.expiryType === type ? c.accentTint : "transparent",
+            }}
+          >
+            <Text
+              style={{
+                color: value.expiryType === type ? c.accentDark : c.muted,
+                fontWeight: "600",
+                fontSize: 13,
+              }}
+            >
+              {type === "ONCE"
+                ? "Once"
+                : type === "NEVER"
+                  ? "None"
+                  : "Recurring"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {value.expiryType !== "NEVER" ? (
+        <>
+          <Text style={label}>
+            {value.expiryType === "RECURRING"
+              ? "First due date"
+              : "Expiration date"}
+          </Text>
+          {Platform.OS === "web" ? (
+            <TextInput
+              accessibilityLabel="Date (YYYY-MM-DD)"
+              value={value.expiryDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={c.muted}
+              onChangeText={(expiryDate) => onChange({ ...value, expiryDate })}
+              style={{
+                minHeight: 50,
+                borderWidth: 1,
+                borderColor: c.border,
+                borderRadius: 12,
+                padding: 14,
+                color: c.text,
+              }}
+            />
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Choose date"
+              onPress={() => setPicker(true)}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
+                minHeight: 50,
+                borderWidth: 1,
+                borderColor: c.border,
+                borderRadius: 12,
+                padding: 14,
+              }}
+            >
+              <CalendarDays color={c.muted} size={18} />
+              <Text style={{ color: c.text }}>
+                {formatDate(value.expiryDate) || "Choose date"}
+              </Text>
+            </Pressable>
+          )}
+          {picker && Platform.OS !== "web" ? (
+            <DateTimePicker
+              value={parseDate(value.expiryDate) ?? new Date()}
+              mode="date"
+              display={Platform.OS === "ios" ? "inline" : "default"}
+              themeVariant={dark ? "dark" : "light"}
+              accentColor={c.accent}
+              onDismiss={() => setPicker(false)}
+              onValueChange={(_, date) => {
+                onChange({ ...value, expiryDate: dateOnly(date) });
+                setPicker(false);
+              }}
+            />
+          ) : null}
+        </>
+      ) : null}
+      {value.expiryType === "RECURRING" ? (
+        <>
+          <Text style={label}>Repeat every</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Set recurrence"
+            onPress={() => {
+              setInterval({ ...value.interval });
+              setRepeat(true);
+            }}
+            style={{
+              borderWidth: 1,
+              borderColor: c.border,
+              borderRadius: 12,
+              minHeight: 50,
+              padding: 14,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <Text style={{ color: c.text, fontSize: 14 }}>
+              {intervalLabel(value.interval) || "Choose years, months and days"}
+            </Text>
+            <ChevronDown size={18} color={c.muted} />
+          </Pressable>
+          <Text style={label}>Renewal method</Text>
+          {(["AUTOMATIC", "MANUAL"] as const).map((mode) => (
+            <Pressable
+              key={mode}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: value.renewalMode === mode }}
+              onPress={() => onChange({ ...value, renewalMode: mode })}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
+                padding: 14,
+                marginBottom: 8,
+                minHeight: 65,
+                borderRadius: 13,
+                borderWidth: 1,
+                borderColor: value.renewalMode === mode ? c.accent : c.border,
+                backgroundColor:
+                  value.renewalMode === mode ? c.accentTint : c.surface,
+              }}
+            >
+              <View style={{ flex: 1, gap: 5 }}>
+                <Text
+                  style={{ color: c.text, fontSize: 14, fontWeight: "600" }}
+                >
+                  {mode === "AUTOMATIC" ? "Automatic" : "Manual"}
+                </Text>
+                <Text style={{ color: c.muted, fontSize: 12, lineHeight: 17 }}>
+                  {mode === "AUTOMATIC"
+                    ? "Show the next scheduled date automatically."
+                    : "Keep the due date until I confirm renewal."}
+                </Text>
+              </View>
+              {value.renewalMode === mode ? (
+                <Check size={18} color={c.accentDark} />
+              ) : (
+                <View
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 9,
+                    borderWidth: 1,
+                    borderColor: c.muted,
+                  }}
+                />
+              )}
+            </Pressable>
+          ))}
+        </>
+      ) : null}
+      {value.expiryType === "NEVER" ? (
+        <View
+          style={{
+            backgroundColor: c.accentTint,
+            borderRadius: 14,
+            padding: 20,
+            marginTop: 20,
+          }}
+        >
+          <Text style={{ color: c.accentDark, lineHeight: 22 }}>
+            This item has no expiration date. It stays in your items and won’t
+            send expiration reminders.
+          </Text>
+        </View>
+      ) : previewKey === inputKey && preview ? (
+        <Text style={{ color: c.accentDark, fontSize: 13, marginTop: 16 }}>
+          {preview}
+        </Text>
+      ) : previewKey === inputKey && pending ? (
+        <ActivityIndicator color={c.accent} style={{ marginTop: 16 }} />
+      ) : null}
+      <Modal
+        visible={repeat}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRepeat(false)}
+      >
+        <View
+          style={{
             flex: 1,
-            minHeight: 44,
-            flexDirection: "row",
-            gap: 6,
-            justifyContent: "center",
-            alignItems: "center",
-            backgroundColor: colors.surface,
-            borderRadius: 8,
-            borderWidth: 1,
-            borderColor: colors.border,
-        },
-        active: {
-            backgroundColor: colors.accentTint,
-            borderColor: colors.accentDark,
-        },
-        segmentText: { color: colors.muted, fontSize: 12 },
-        radio: {
-            width: 14,
-            height: 14,
-            borderRadius: 7,
-            backgroundColor: colors.accent,
-            justifyContent: "center",
-            alignItems: "center",
-        },
-        dot: {
-            width: 5,
-            height: 5,
-            borderRadius: 3,
-            backgroundColor: colors.accentDark,
-        },
-        counters: { flexDirection: "row", gap: 12, marginBottom: 18 },
-        counterGroup: { flex: 1 },
-        unit: {
-            color: colors.muted,
-            fontSize: 12,
-            textAlign: "center",
-            marginBottom: 6,
-        },
-        counter: {
-            flexDirection: "row",
-            alignItems: "center",
-            borderRadius: 8,
-            backgroundColor: colors.surface,
-        },
-        counterButton: {
-            flex: 1,
-            minHeight: 44,
-            alignItems: "center",
-            justifyContent: "center",
-        },
-        number: {
-            width: 28,
-            color: colors.text,
-            textAlign: "center",
-            padding: 0,
-            fontSize: 15,
-        },
-        date: {
-            minHeight: 48,
-            paddingHorizontal: 12,
-            flexDirection: "row",
-            gap: 10,
-            alignItems: "center",
-            borderWidth: 1,
-            borderColor: colors.border,
-            borderRadius: 8,
-            backgroundColor: colors.surface,
-            marginBottom: 12,
-        },
-        dateText: {
-            flex: 1,
-            color: colors.text,
-            fontSize: 14,
-            paddingVertical: 10,
-        },
-        hint: {
-            flexDirection: "row",
-            gap: 8,
-            backgroundColor: colors.surface2,
-            padding: 12,
-            borderRadius: 8,
-        },
-        hintText: {
-            flex: 1,
-            color: colors.muted,
-            fontSize: 12,
-            lineHeight: 18,
-        },
-    });
+            backgroundColor: "rgba(0,0,0,.35)",
+            justifyContent: "flex-end",
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: c.bg,
+              borderTopLeftRadius: 28,
+              borderTopRightRadius: 28,
+              padding: 24,
+              paddingBottom: 42,
+              width: "100%",
+              maxWidth: 640,
+              alignSelf: "center",
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: c.text, fontSize: 22, fontWeight: "700" }}>
+                Repeat every
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close recurrence"
+                hitSlop={14}
+                onPress={() => setRepeat(false)}
+              >
+                <X color={c.muted} size={22} />
+              </Pressable>
+            </View>
+            <View style={{ flexDirection: "row", gap: 16, marginVertical: 28 }}>
+              {(["years", "months", "days"] as const).map((unit) => (
+                <View
+                  key={unit}
+                  style={{ flex: 1, alignItems: "center", gap: 14 }}
+                >
+                  <Text style={{ color: c.muted, fontSize: 13 }}>
+                    {unit[0].toUpperCase() + unit.slice(1)}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Increase ${unit}`}
+                    disabled={interval[unit] >= 999}
+                    onPress={() =>
+                      setInterval((old) => ({
+                        ...old,
+                        [unit]: Math.min(999, old[unit] + 1),
+                      }))
+                    }
+                    style={{ padding: 12 }}
+                  >
+                    <Plus size={18} color={c.accentDark} />
+                  </Pressable>
+                  <TextInput
+                    accessibilityLabel={unit}
+                    keyboardType="number-pad"
+                    value={String(interval[unit])}
+                    onChangeText={(text) => {
+                      if (/^\d{0,3}$/.test(text))
+                        setInterval((old) => ({
+                          ...old,
+                          [unit]: Number(text),
+                        }));
+                    }}
+                    style={{
+                      textAlign: "center",
+                      width: "100%",
+                      fontSize: 26,
+                      fontWeight: "600",
+                      padding: 16,
+                      borderRadius: 14,
+                      backgroundColor: c.accentTint,
+                      color: c.text,
+                    }}
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Decrease ${unit}`}
+                    disabled={!interval[unit]}
+                    onPress={() =>
+                      setInterval((old) => ({
+                        ...old,
+                        [unit]: Math.max(0, old[unit] - 1),
+                      }))
+                    }
+                    style={{ padding: 12 }}
+                  >
+                    <Minus color={c.muted} size={18} />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+            <Text
+              style={{
+                color: c.muted,
+                textAlign: "center",
+                marginBottom: 18,
+                fontSize: 13,
+              }}
+            >
+              {intervalLabel(interval)
+                ? `Every ${intervalLabel(interval)}`
+                : "Choose at least one positive value"}
+            </Text>
+            <Button
+              title="Apply"
+              disabled={!Object.values(interval).some((n) => n > 0)}
+              onPress={() => {
+                onChange({ ...value, interval });
+                setRepeat(false);
+              }}
+            />
+            <Button
+              title="Cancel"
+              variant="secondary"
+              onPress={() => setRepeat(false)}
+            />
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}

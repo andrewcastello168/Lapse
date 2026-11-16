@@ -13,11 +13,13 @@ import { DATABASE } from '../../database/database.js';
 
 type JwtPayload = {
   sub: string;
+  ver?: number;
 };
 
 type AuthenticatedRequest = Request & {
   user?: {
     sub: string;
+    timezone?: string;
   };
 };
 
@@ -55,16 +57,17 @@ export class JwtAuthGuard implements CanActivate {
 
     // Pastikan user masih aktif.
     const user = await this.db('master_users')
-      .select('id', 'is_active')
+      .select('id', 'is_active', 'token_version', 'timezone')
       .where('id', payload.sub)
       .first();
 
-    if (!user || !user.is_active) {
+    if (!user || !user.is_active || (payload.ver ?? 0) !== user.token_version) {
       throw new UnauthorizedException('User account is inactive');
     }
 
     request.user = {
       sub: user.id,
+      timezone: user.timezone ?? 'UTC',
     };
 
     return true;

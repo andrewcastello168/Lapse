@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, Inject } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
+import { withImages } from '../catalog-images.js';
 import type { Knex } from 'knex';
 
 import { DATABASE } from '../database/database.js';
@@ -12,9 +13,14 @@ export class CategoriesService {
 
   // GET /categories
   async findAll() {
-    return this.db('master_categories')
+    const rows = await this.db<{
+      id: number;
+      name: string;
+      image_path: string | null;
+    }>('master_categories')
       .select('id', 'name', 'image_path')
       .where('is_active', true)
       .orderBy('id');
+    return Promise.all(rows.map(withImages));
   }
 }

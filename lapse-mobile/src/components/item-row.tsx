@@ -1,111 +1,88 @@
-import { CategoryIcon } from "@/components/category-icon";
-import { useThemeColors } from "@/context/preferences";
+import { Pressable, Text, View } from "react-native";
 import { StorageImage } from "@/components/storage-image";
-import type { Palette } from "@/constants/theme";
-import { daysUntil, formatDate, nextDueDate } from "@/utils/item-dates";
+import { useThemeColors } from "@/context/preferences";
+import { formatDate } from "@/utils/item-dates";
 import type { UserItem } from "@/types/models";
-import { Pressable, StyleSheet, Text, View } from "react-native";
-
 export function itemDueDate(item: UserItem) {
-    if (item.expiry_type === "NEVER" || !item.expiry_date) return null;
-    const start = item.expiry_date.slice(0, 10);
-    return item.expiry_type === "RECURRING"
-        ? nextDueDate(start, {
-              years: item.recurrence_years ?? 0,
-              months: item.recurrence_months ?? 0,
-              days: item.recurrence_days ?? 0,
-          })
-        : start;
+  return item.effective_expiry_date;
 }
-export function DueBadge({ date }: { date?: string | null }) {
-    const colors = useThemeColors();
-    const s = createStyles(colors);
-    const days = date ? daysUntil(date) : null;
-    const backgroundColor =
-        days === null
-            ? colors.surface2
-            : days <= 7
-              ? colors.dangerBadge
-              : days <= 45
-                ? colors.warningBadge
-                : colors.successBadge;
-    return (
-        <View style={[s.badge, { backgroundColor }]}>
-            <Text
-                style={[s.badgeText, days === null && { color: colors.text }]}
-            >
-                {days === null
-                    ? "No expiry"
-                    : days < 0
-                      ? "Expired"
-                      : days === 0
-                        ? "Today"
-                        : `${days} days`}
-            </Text>
-        </View>
-    );
+export function DueBadge({
+  days,
+  status,
+}: {
+  days: number | null;
+  status?: string;
+}) {
+  const c = useThemeColors();
+  const urgent = days !== null && days <= 0;
+  return (
+    <Text
+      style={{
+        color: urgent ? c.danger : c.accentDark,
+        fontSize: 13,
+        fontWeight: "700",
+      }}
+    >
+      {days === null
+        ? "∞"
+        : days < 0
+          ? `${Math.abs(days)}d late`
+          : days === 0
+            ? "Due today"
+            : `${days}d`}
+      {status === "EXPIRING_SOON" ? " · Soon" : ""}
+    </Text>
+  );
 }
 export function ItemRow({
-    item,
-    occurrenceDate,
-    onPress,
+  item,
+  onPress,
 }: {
-    item: UserItem;
-    occurrenceDate?: string;
-    onPress: () => void;
+  item: UserItem;
+  onPress: () => void;
 }) {
-    const colors = useThemeColors();
-    const s = createStyles(colors);
-    const due = occurrenceDate ?? itemDueDate(item);
-    return (
-        <Pressable
-            accessibilityRole="button"
-            onPress={onPress}
-            style={({ pressed }) => [s.row, { opacity: pressed ? 0.7 : 1 }]}
+  const c = useThemeColors();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${item.item_name}, ${item.expiration_status.replaceAll("_", " ").toLowerCase()}`}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        minHeight: 74,
+        borderBottomWidth: 0.5,
+        borderColor: c.border,
+        paddingVertical: 12,
+        opacity: pressed ? 0.6 : 1,
+      })}
+    >
+      <StorageImage
+        uri={item.image_url}
+        fallbackUri={item.category_image_url}
+        size={44}
+      />
+      <View style={{ flex: 1, gap: 4 }}>
+        <Text
+          numberOfLines={1}
+          style={{ color: c.text, fontSize: 15, fontWeight: "600" }}
         >
-            <>
-                {item.mi_id ? (
-                    <StorageImage path={item.image_path} size={44} />
-                ) : (
-                    <CategoryIcon
-                        name={item.category_name}
-                        path={item.category_image_path ?? item.image_path}
-                        size={44}
-                    />
-                )}
-            </>
-            <View style={s.main}>
-                <Text style={s.name}>{item.item_name}</Text>
-                <Text style={s.meta}>{item.category_name}</Text>
-            </View>
-            <View style={s.right}>
-                {due ? <Text style={s.date}>{formatDate(due)}</Text> : null}
-                <DueBadge date={due} />
-            </View>
-        </Pressable>
-    );
+          {item.item_name}
+        </Text>
+        <Text style={{ color: c.muted, fontSize: 12 }}>
+          {item.category_name}
+          {item.renewal_mode === "MANUAL" ? " · Manual" : ""}
+        </Text>
+      </View>
+      <View style={{ alignItems: "flex-end", gap: 5 }}>
+        <DueBadge days={item.days_remaining} status={item.expiration_status} />
+        {item.effective_expiry_date ? (
+          <Text style={{ color: c.muted, fontSize: 11 }}>
+            {formatDate(item.effective_expiry_date)}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
 }
-const createStyles = (colors: Palette) =>
-    StyleSheet.create({
-        row: {
-            backgroundColor: colors.surface,
-            borderRadius: 8,
-            padding: 10,
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 10,
-            marginBottom: 8,
-        },
-        main: { flex: 1 },
-        name: { color: colors.text, fontSize: 14, fontWeight: "600" },
-        meta: { color: colors.muted, fontSize: 12, marginTop: 4 },
-        right: { alignItems: "flex-end", gap: 6 },
-        date: { color: colors.muted, fontSize: 12 },
-        badge: {
-            alignSelf: "flex-start",
-            borderRadius: 5,
-            paddingHorizontal: 8,
-            paddingVertical: 5,
-        },
-        badgeText: { color: colors.badgeText, fontSize: 11, fontWeight: "700" },
-    });

@@ -1,123 +1,114 @@
-import { useThemeColors } from "@/context/preferences";
-import { Tabs, usePathname, useRouter } from "expo-router";
-import { Alert, BackHandler, Platform, StyleSheet } from "react-native";
+import { Tabs, useRouter, usePathname } from "expo-router";
+import { Alert, BackHandler, Platform, View } from "react-native";
 import { useEffect } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { CirclePlus, House, LayoutGrid, UserRound } from "lucide-react-native";
-import type { Palette } from "@/constants/theme";
-
+import {
+  CalendarDays,
+  House,
+  LayoutGrid,
+  Plus,
+  Settings,
+} from "lucide-react-native";
+import { useThemeColors } from "@/context/preferences";
 export default function TabsLayout() {
-    const colors = useThemeColors();
-    const styles = createStyles(colors);
-    const insets = useSafeAreaInsets();
-    const pathname = usePathname();
-    const router = useRouter();
-    const bottomInset = Math.max(
-        insets.bottom,
-        Platform.OS === "android" ? 8 : 0,
-    );
-
-    useEffect(() => {
-        if (Platform.OS !== "android") {
-            return;
-        }
-
-        const subscription = BackHandler.addEventListener(
-            "hardwareBackPress",
-            () => {
-                if (pathname !== "/" && pathname !== "/(tabs)") {
-                    router.back();
-                    return true;
-                }
-
-                Alert.alert("Exit Lapse?", "You are on the Home screen.", [
-                    { text: "Stay", style: "cancel" },
-                    {
-                        text: "Exit",
-                        style: "destructive",
-                        onPress: () => BackHandler.exitApp(),
-                    },
-                ]);
-                return true;
-            },
-        );
-
-        return () => subscription.remove();
-    }, [pathname, router]);
-
-    return (
-        <Tabs
-            screenOptions={{
-                headerShown: false,
-                tabBarActiveTintColor: colors.accent,
-                tabBarInactiveTintColor: colors.muted,
-                tabBarStyle: [
-                    styles.tabBar,
-                    { paddingBottom: bottomInset, height: 56 + bottomInset },
-                ],
-                tabBarLabelStyle: styles.label,
-                tabBarItemStyle: styles.item,
-            }}
-        >
-            <Tabs.Screen
-                name="index"
-                options={{
-                    title: "Home",
-                    tabBarIcon: ({ color, size }) => (
-                        <House color={color} size={size} />
-                    ),
-                }}
-            />
-            <Tabs.Screen
-                name="add"
-                listeners={{
-                    tabPress: (event) => {
-                        event.preventDefault();
-                        router.push("/add-flow");
-                    },
-                }}
-                options={{
-                    title: "Add",
-                    tabBarIcon: ({ color, size }) => (
-                        <CirclePlus color={color} size={size} />
-                    ),
-                }}
-            />
-            <Tabs.Screen
-                name="items"
-                options={{
-                    title: "Items",
-                    tabBarIcon: ({ color, size }) => (
-                        <LayoutGrid color={color} size={size} />
-                    ),
-                }}
-            />
-            <Tabs.Screen
-                name="profile"
-                options={{
-                    title: "Profile",
-                    tabBarIcon: ({ color, size }) => (
-                        <UserRound color={color} size={size} />
-                    ),
-                }}
-            />
-        </Tabs>
-    );
-}
-
-const createStyles = (colors: Palette) =>
-    StyleSheet.create({
-        tabBar: {
-            backgroundColor: colors.bg,
-            borderTopColor: colors.border,
-            minHeight: 56,
-            paddingTop: 6,
-        },
-        label: {
-            fontSize: 11,
-            fontWeight: "700",
-        },
-        item: {
-            minHeight: 48,
-        },
+  const c = useThemeColors();
+  const inset = useSafeAreaInsets();
+  const router = useRouter();
+  const pathname = usePathname();
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const listener = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (pathname !== "/" && pathname !== "/(tabs)") {
+        if (router.canGoBack()) router.back();
+        else router.replace("/(tabs)");
+      } else
+        Alert.alert("Exit Lapse?", "You are on the Home screen.", [
+          { text: "Stay", style: "cancel" },
+          {
+            text: "Exit",
+            style: "destructive",
+            onPress: () => BackHandler.exitApp(),
+          },
+        ]);
+      return true;
     });
+    return () => listener.remove();
+  }, [pathname, router]);
+  const bottom = Math.max(inset.bottom, Platform.OS === "android" ? 8 : 4);
+  return (
+    <Tabs
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: c.accentDark,
+        tabBarInactiveTintColor: c.muted,
+        tabBarStyle: {
+          backgroundColor: c.bg,
+          borderTopColor: c.border,
+          height: 62 + bottom,
+          paddingBottom: bottom,
+          paddingTop: 7,
+        },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: "600" },
+        tabBarItemStyle: { minHeight: 48 },
+      }}
+    >
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: "Home",
+          tabBarIcon: ({ color }) => <House color={color} size={21} />,
+        }}
+      />
+      <Tabs.Screen
+        name="items"
+        options={{
+          title: "Items",
+          tabBarIcon: ({ color }) => <LayoutGrid color={color} size={21} />,
+        }}
+      />
+      <Tabs.Screen
+        name="add"
+        listeners={{
+          tabPress: (event) => {
+            event.preventDefault();
+            router.push("/add-flow");
+          },
+        }}
+        options={{
+          title: "",
+          tabBarAccessibilityLabel: "Add item",
+          tabBarIcon: () => (
+            <View
+              style={{
+                backgroundColor: c.accent,
+                width: 43,
+                height: 43,
+                borderRadius: 22,
+                alignItems: "center",
+                justifyContent: "center",
+                marginTop: 6,
+              }}
+            >
+              <Plus color="white" size={26} />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="calendar"
+        options={{
+          title: "Calendar",
+          tabBarIcon: ({ color }) => <CalendarDays color={color} size={21} />,
+        }}
+      />
+      <Tabs.Screen
+        name="preferences"
+        options={{
+          title: "Settings",
+          tabBarIcon: ({ color }) => <Settings color={color} size={21} />,
+        }}
+      />
+      <Tabs.Screen name="profile" options={{ href: null }} />
+    </Tabs>
+  );
+}

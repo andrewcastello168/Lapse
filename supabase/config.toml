@@ -1,0 +1,3 @@
+# Custom Lapse JWT verification is performed inside the function, not Supabase Auth.
+[functions.notifications]
+verify_jwt = false

@@ -1,3 +1,5 @@
+import { bounded } from "@/utils/local";
+import { unregisterPush } from "@/services/push-device";
 import {
   createContext,
   useCallback,
@@ -9,10 +11,10 @@ import {
 import type { AuthSession, SessionUser } from "@/types/models";
 import {
   api,
+  ApiError,
   getSession,
   setSession,
   subscribeSession,
-  ApiError,
   setApiTimezone,
 } from "@/services/api";
 import { clearSession, readSession, writeSession } from "@/utils/storage";
@@ -39,52 +41,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
   useEffect(() => {
     let active = true;
-    readSession()
-      .then(async (stored) => {
-        if (!active || !stored) return;
+    void bounded(readSession(), null).then((stored) => {
+      if (!active) return;
+      if (stored) {
         setSession(stored);
         setApiTimezone(
           stored.user.timezone ??
             Intl.DateTimeFormat().resolvedOptions().timeZone,
         );
-        try {
-          const profile = await api.me();
-          if (active && getSession()) {
-            const next = { ...getSession()!, user: profile };
+      }
+      // Navigation must never wait for the network, even for a saved session.
+      setInitializing(false);
+      if (!stored) return;
+      const expectedUser = stored.user.id;
+      void api
+        .me()
+        .then(async (profile) => {
+          const current = getSession();
+          if (active && current?.user.id === expectedUser) {
+            const next = { ...current, user: profile };
             setSession(next);
             await writeSession(next);
           }
-        } catch (reason) {
-          if (reason instanceof ApiError && reason.status === 401) {
-            setSession(null);
-            await clearSession();
-          }
-        }
-      })
-      .finally(() => {
-        if (active) setInitializing(false);
-      });
+        })
+        .catch(() => {
+          // The API refresh layer clears only a proven invalid refresh token.
+          // Network failures and timeouts retain the stored session.
+        });
+    });
     return () => {
       active = false;
     };
   }, []);
   const establish = async (next: AuthSession) => {
     setSession(next);
-    await writeSession(next);
+    await bounded(writeSession(next), undefined);
     if (!next.user.timezone) {
       const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
       setApiTimezone(zone);
-      try {
-        const profile = await api.profile({ timezone: zone });
-        const current = getSession();
-        if (current) {
-          const updated = { ...current, user: profile };
-          setSession(updated);
-          await writeSession(updated);
-        }
-      } catch {
-        /* Device timezone still accompanies every API request. */
-      }
+      void api
+        .profile({ timezone: zone })
+        .then(async (profile) => {
+          const current = getSession();
+          if (current?.user.id === next.user.id) {
+            const updated = { ...current, user: profile };
+            setSession(updated);
+            await writeSession(updated);
+          }
+        })
+        .catch(() => {});
     }
   };
   const signIn = useCallback(async (email: string, password: string) => {
@@ -94,7 +99,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await establish(await api.login({ email, password }));
       return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to sign in");
+      setError(
+        reason instanceof ApiError
+          ? reason.message
+          : "Unable to connect to the server. Please try again.",
+      );
       return false;
     } finally {
       setLoading(false);
@@ -122,6 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(async () => {
     setLoading(true);
     try {
+      await unregisterPush().catch(() => {});
       await api.logout();
     } catch {
       /* Clear the local session even when offline. */

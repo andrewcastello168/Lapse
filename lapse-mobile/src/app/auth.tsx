@@ -1,28 +1,58 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
-import { Image, Pressable, Text, View } from "react-native";
-import { Eye, EyeOff } from "lucide-react-native";
+import { useEffect, useState } from "react";
+import { Image, Pressable, View } from "react-native";
+import { Text } from "@/components/typography";
 import { Button, Input, Screen } from "@/components/ui";
 import { useAuth } from "@/context/auth";
 import { useThemeColors } from "@/context/preferences";
 import { api } from "@/services/api";
 export default function Auth() {
-  const { mode = "signin", token = "" } = useLocalSearchParams<{
+  const {
+    mode = "signin",
+    token = "",
+    passwordChanged = "",
+  } = useLocalSearchParams<{
     mode?: string;
     token?: string;
+    passwordChanged?: string;
   }>();
-  return <AuthForm key={mode} mode={mode} token={token} />;
+  return (
+    <AuthForm
+      key={mode}
+      mode={mode}
+      token={token}
+      passwordChanged={passwordChanged}
+    />
+  );
 }
-function AuthForm({ mode, token }: { mode: string; token: string }) {
+function AuthForm({
+  mode,
+  token,
+  passwordChanged,
+}: {
+  mode: string;
+  token: string;
+  passwordChanged: string;
+}) {
   const c = useThemeColors();
   const { signIn, signUp, signOut, loading, error, clearError } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [visible, setVisible] = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [cooldown, setCooldown] = useState(0);
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown(cooldown - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
   const [busy, setBusy] = useState(false);
   const [localError, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(
+    passwordChanged === "1"
+      ? "Password changed. Sign in again with your new password."
+      : "",
+  );
   const signup = mode === "signup";
   const forgot = mode === "forgot";
   const reset = mode === "reset";
@@ -42,12 +72,17 @@ function AuthForm({ mode, token }: { mode: string; token: string }) {
       setError("Enter your name");
       return;
     }
+    if (reset && password !== confirm) {
+      setError("Passwords must match");
+      return;
+    }
     if (forgot || reset) {
       setBusy(true);
       try {
         const result = forgot
           ? await api.forgotPassword(email.trim())
           : await api.resetPassword(token, password);
+        if (forgot) setCooldown(60);
         if (reset) await signOut();
         setMessage(result.message);
         setPassword("");
@@ -151,32 +186,21 @@ function AuthForm({ mode, token }: { mode: string; token: string }) {
             label="Password"
             value={password}
             onChangeText={setPassword}
-            secureTextEntry={!visible}
+            secureTextEntry
             maxLength={128}
             autoComplete={signup || reset ? "new-password" : "current-password"}
             style={{ paddingRight: 52 }}
           />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={visible ? "Hide password" : "Show password"}
-            onPress={() => setVisible(!visible)}
-            style={{
-              position: "absolute",
-              right: 3,
-              top: 23,
-              width: 46,
-              height: 48,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {visible ? (
-              <EyeOff size={18} color={c.muted} />
-            ) : (
-              <Eye size={18} color={c.muted} />
-            )}
-          </Pressable>
         </View>
+      ) : null}
+      {reset ? (
+        <Input
+          label="Confirm new password"
+          value={confirm}
+          onChangeText={setConfirm}
+          secureTextEntry
+          autoComplete="new-password"
+        />
       ) : null}
       {!signup && !forgot && !reset ? (
         <Pressable
@@ -229,14 +253,16 @@ function AuthForm({ mode, token }: { mode: string; token: string }) {
             loading || busy
               ? "Please wait…"
               : forgot
-                ? "Send reset link"
+                ? cooldown > 0
+                  ? `Resend in ${cooldown}s`
+                  : "Send reset link"
                 : reset
                   ? "Update password"
                   : signup
                     ? "Create account"
                     : "Sign in"
           }
-          disabled={loading || busy}
+          disabled={loading || busy || (forgot && cooldown > 0)}
           onPress={() => void submit()}
         />
       )}

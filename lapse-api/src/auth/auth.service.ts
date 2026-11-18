@@ -247,11 +247,11 @@ export class AuthService {
     if (inserted) {
       try {
         await this.mail.passwordReset(user.email, token);
-      } catch (error) {
+      } catch {
         await this.db('password_reset_tokens')
           .where('token_hash', this.hash(token))
           .del();
-        throw error;
+        return message;
       }
     }
     return message;

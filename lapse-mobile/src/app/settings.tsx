@@ -1,13 +1,14 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
-import { Linking, Platform, Pressable, Switch, Text, View } from "react-native";
+import { Linking, Platform, Pressable, Switch, View } from "react-native";
+import { Text } from "@/components/typography";
 import { Check, ChevronRight, UserRound } from "lucide-react-native";
 import Constants from "expo-constants";
 import { Button, Input, Screen } from "@/components/ui";
 import { useAuth } from "@/context/auth";
 import { usePreferences, type Mode } from "@/context/preferences";
 import { useLocalNotifications } from "@/context/notifications";
-import { api, setApiTimezone } from "@/services/api";
+import { api } from "@/services/api";
 const titles: Record<string, string> = {
   profile: "Profile",
   edit: "Edit profile",
@@ -27,7 +28,7 @@ export default function Settings() {
   const [name, setName] = useState(user?.name ?? "");
   const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
-  const [zone, setZone] = useState(prefs.timezone);
+  const [confirmation, setConfirmation] = useState("");
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -43,22 +44,12 @@ export default function Settings() {
         if (!name.trim()) throw new Error("Enter your name");
         await updateUser(await api.profile({ name: name.trim() }));
         setMessage("Your profile has been updated");
-      } else if (section === "timezone") {
-        try {
-          new Intl.DateTimeFormat("en", { timeZone: zone }).format();
-        } catch {
-          throw new Error("Choose a valid IANA timezone");
-        }
-        const profile = await api.profile({ timezone: zone });
-        setApiTimezone(zone);
-        prefs.update({ timezone: zone });
-        await updateUser(profile);
-        setMessage("Timezone updated");
       } else {
         if (password.length < 8) throw new Error("Use at least 8 characters");
+        if (password !== confirmation) throw new Error("Passwords must match");
         await api.changePassword(current, password);
         await signOut();
-        router.replace("/auth?mode=signin");
+        router.replace("/auth?mode=signin&passwordChanged=1");
       }
     } catch (reason) {
       setError(
@@ -180,15 +171,55 @@ export default function Settings() {
             autoComplete="new-password"
             maxLength={128}
           />
+          <Input
+            label="Confirm new password"
+            value={confirmation}
+            onChangeText={setConfirmation}
+            secureTextEntry
+            autoComplete="new-password"
+            maxLength={128}
+          />
+          {confirmation && password !== confirmation ? (
+            <Text style={{ color: c.danger }}>Passwords must match</Text>
+          ) : null}
           <Button
             title={busy ? "Updating…" : "Change password"}
-            disabled={busy || !current || password.length < 8}
+            disabled={
+              busy ||
+              !current ||
+              password.length < 8 ||
+              password !== confirmation
+            }
             onPress={() => void save()}
           />
         </View>
       ) : null}
       {section === "notifications" ? (
         <>
+          <View style={{ marginTop: 20 }}>
+            <Button
+              title={
+                notifications.testing
+                  ? "Sending test push..."
+                  : "Send test push notification"
+              }
+              disabled={notifications.testing}
+              onPress={() => void notifications.testPush()}
+            />
+            <Text style={{ color: c.muted, lineHeight: 22, marginTop: 10 }}>
+              Use an Android Development Build on your physical device. This
+              sends one remote push through Supabase Edge and Expo; it does not
+              enable scheduled reminders.
+            </Text>
+            {notifications.testMessage ? (
+              <Text
+                accessibilityRole="alert"
+                style={{ color: c.text, lineHeight: 22, marginVertical: 12 }}
+              >
+                {notifications.testMessage}
+              </Text>
+            ) : null}
+          </View>
           <View
             style={{
               flexDirection: "row",
@@ -232,7 +263,7 @@ export default function Settings() {
             }}
           >
             {notifications.permission === "unsupported"
-              ? "Local reminders are available in the iOS and Android app."
+              ? "Remote push testing requires a native development build; Expo Go supports ordinary UI development."
               : notifications.permission === "granted"
                 ? "Notifications are allowed on this device."
                 : notifications.permission === "denied"
@@ -262,9 +293,9 @@ export default function Settings() {
               marginTop: 24,
             }}
           >
-            Reminders are scheduled on each device separately. Open Lapse
-            periodically to refresh upcoming reminders. Your device controls
-            final delivery.
+            Server reminders work after secure device registration. Until
+            configured, this device keeps its existing local reminder queue.
+            Your device controls final delivery.
           </Text>
           {notifications.syncing ? (
             <Text style={{ color: c.accentDark, marginTop: 16 }}>
@@ -296,12 +327,23 @@ export default function Settings() {
           >
             Remind me before each due date
           </Text>
-          {([1, 3, 7, 30] as const).map((offset) =>
+          {([0, 1, 3, 7, 14, 30] as const).map((offset) =>
             row(
               offset + " " + (offset === 1 ? "day" : "days") + " before",
               "",
-              () => prefs.update({ reminderOffset: offset }),
-              prefs.reminderOffset === offset,
+              () => {
+                const offsets = prefs.reminderOffsets.includes(offset)
+                  ? prefs.reminderOffsets.filter((n) => n !== offset)
+                  : [...prefs.reminderOffsets, offset];
+                if (offsets.length)
+                  prefs.update({
+                    reminderOffsets: offsets,
+                    ...([1, 3, 7, 30].includes(offset)
+                      ? { reminderOffset: offset as 1 | 3 | 7 | 30 }
+                      : {}),
+                  });
+              },
+              prefs.reminderOffsets.includes(offset),
             ),
           )}
           <Text
@@ -316,7 +358,7 @@ export default function Settings() {
             Delivery time · {prefs.timezone}
           </Text>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            {[7, 8, 9, 10, 12, 18, 20].map((hour) => (
+            {Array.from({ length: 24 }, (_, n) => n).map((hour) => (
               <Pressable
                 key={hour}
                 accessibilityRole="radio"
@@ -359,20 +401,21 @@ export default function Settings() {
           <Text style={{ color: c.muted, lineHeight: 22, marginBottom: 18 }}>
             Dates and reminders follow your selected timezone.
           </Text>
-          <Input
-            label="Selected timezone"
-            value={zone}
-            onChangeText={setZone}
-            autoCapitalize="none"
-          />
-          <Button
-            title={busy ? "Saving…" : "Save timezone"}
-            disabled={busy}
-            onPress={() => void save()}
-          />
-          {row("Use device timezone", "", () =>
-            setZone(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"),
+          {row(
+            "Automatic timezone",
+            prefs.timezoneMode === "automatic" ? "On" : "Off",
+            () =>
+              prefs.update({
+                timezoneMode: "automatic",
+                timezone:
+                  Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+              }),
+            prefs.timezoneMode === "automatic",
           )}
+          <Text style={{ color: c.muted, marginBottom: 12 }}>
+            Selected: {prefs.timezone.replaceAll("_", " ")}. Select a city below
+            for a manual override.
+          </Text>
           <Input
             label="Find a timezone"
             value={search}
@@ -386,7 +429,19 @@ export default function Settings() {
             )
             .slice(0, 40)
             .map((value) =>
-              row(value, "", () => setZone(value), zone === value),
+              row(
+                value.replaceAll("_", " "),
+                new Intl.DateTimeFormat("en", {
+                  timeZone: value,
+                  timeZoneName: "shortOffset",
+                })
+                  .formatToParts(new Date())
+                  .find((p) => p.type === "timeZoneName")?.value ?? "",
+                () => {
+                  prefs.update({ timezone: value, timezoneMode: "manual" });
+                },
+                prefs.timezone === value,
+              ),
             )}
         </View>
       ) : null}

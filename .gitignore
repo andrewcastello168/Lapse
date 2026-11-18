@@ -2,8 +2,8 @@ Documentation.txt
 lapse-master-items-ready.zip
 lapse-assets
 docs/*
-!docs/*.md
-!docs/design/
-docs/design/*
-!docs/design/mobile-mockup.png
 BACKEND_DOCUMENTATION.md
+AGENTS.md
+# Private Firebase server credentials never belong in Git
+*service-account*.json
+*firebase-adminsdk*.json

@@ -1,5 +1,6 @@
 import { router } from "expo-router";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { Text } from "@/components/typography";
 import { StorageImage } from "@/components/storage-image";
 import { useThemeColors } from "@/context/preferences";
 import { formatDate } from "@/utils/item-dates";

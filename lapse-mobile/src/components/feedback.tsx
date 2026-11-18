@@ -1,4 +1,5 @@
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, View } from "react-native";
+import { Text } from "@/components/typography";
 import { CalendarCheck, RefreshCw } from "lucide-react-native";
 import { useThemeColors } from "@/context/preferences";
 export function Feedback({

@@ -1,6 +1,8 @@
+import { ItemReminders } from "@/components/item-reminders";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BackHandler, Pressable, ScrollView, Text, View } from "react-native";
+import { BackHandler, Pressable, ScrollView, View } from "react-native";
+import { Text } from "@/components/typography";
 import { Trash2 } from "lucide-react-native";
 import { Button, Input, Screen } from "@/components/ui";
 import { StorageImage } from "@/components/storage-image";
@@ -547,6 +549,9 @@ function Details({ id }: { id: string }) {
           </>
         )}
       </ConfirmSheet>
+      {item && !editing && item.expiry_type !== "NEVER" ? (
+        <ItemReminders id={id} />
+      ) : null}
     </Screen>
   );
 }

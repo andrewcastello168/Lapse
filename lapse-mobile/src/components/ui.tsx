@@ -1,19 +1,19 @@
+import { useSegments, router } from "expo-router";
+import { Guidance, GuideTarget, GuidedScroll } from "./guidance";
 import { useThemeColors } from "@/context/preferences";
-import type { ReactNode } from "react";
-import { ChevronLeft } from "lucide-react-native";
+import { useState, type ReactNode } from "react";
+import { ChevronLeft, Eye, EyeOff, CircleHelp } from "lucide-react-native";
 import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   type TextInputProps,
   View,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { Text, TextInput } from "@/components/typography";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { radius, spacing, type Palette } from "@/constants/theme";
 
@@ -31,29 +31,31 @@ export function Button({
   const colors = useThemeColors();
   const s = createStyles(colors);
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        s.button,
-        variant === "secondary" && s.secondary,
-        variant === "danger" && { backgroundColor: colors.danger },
-        { opacity: disabled ? 0.45 : pressed ? 0.75 : 1 },
-      ]}
-    >
-      <Text
-        style={[
-          s.buttonText,
-          {
-            color: variant === "secondary" ? colors.text : colors.onAccent,
-          },
+    <GuideTarget name={title}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        disabled={disabled}
+        onPress={onPress}
+        style={({ pressed }) => [
+          s.button,
+          variant === "secondary" && s.secondary,
+          variant === "danger" && { backgroundColor: colors.danger },
+          { opacity: disabled ? 0.45 : pressed ? 0.75 : 1 },
         ]}
       >
-        {title}
-      </Text>
-    </Pressable>
+        <Text
+          style={[
+            s.buttonText,
+            {
+              color: variant === "secondary" ? colors.text : colors.onAccent,
+            },
+          ]}
+        >
+          {title}
+        </Text>
+      </Pressable>
+    </GuideTarget>
   );
 }
 export function Input({
@@ -62,16 +64,56 @@ export function Input({
 }: TextInputProps & { label?: string }) {
   const colors = useThemeColors();
   const s = createStyles(colors);
+  const [visible, setVisible] = useState(false);
   return (
-    <View style={s.group}>
-      {label && <Text style={s.label}>{label}</Text>}
-      <TextInput
-        accessibilityLabel={label ?? props.placeholder}
-        placeholderTextColor={colors.muted}
-        {...props}
-        style={[s.input, props.style]}
-      />
-    </View>
+    <GuideTarget name={label ?? props.placeholder ?? "Input"}>
+      <View style={s.group}>
+        {label && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={s.label}>{label}</Text>
+            {/expir|recurr|renew|timezone|remind|status|filter/i.test(label) ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Help with ${label}`}
+                onPress={() =>
+                  router.push({ pathname: "/help" as "/settings" })
+                }
+                style={{ padding: 8 }}
+              >
+                <CircleHelp size={16} color={colors.muted} />
+              </Pressable>
+            ) : null}
+          </View>
+        )}
+        <View style={{ position: "relative" }}>
+          <TextInput
+            accessibilityLabel={label ?? props.placeholder}
+            placeholderTextColor={colors.muted}
+            {...props}
+            secureTextEntry={props.secureTextEntry && !visible}
+            style={[
+              s.input,
+              props.secureTextEntry && { paddingRight: 52 },
+              props.style,
+            ]}
+          />
+          {props.secureTextEntry ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${visible ? "Hide" : "Show"} ${label ?? "password"}`}
+              onPress={() => setVisible(!visible)}
+              style={{ position: "absolute", right: 0, top: 0, padding: 14 }}
+            >
+              {visible ? (
+                <EyeOff size={20} color={colors.muted} />
+              ) : (
+                <Eye size={20} color={colors.muted} />
+              )}
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    </GuideTarget>
   );
 }
 export function Card({
@@ -127,57 +169,75 @@ export function Screen({
   const colors = useThemeColors();
   const s = createStyles(colors);
   const insets = useSafeAreaInsets();
+  const inTabs = useSegments()[0] === "(tabs)";
   return (
-    <KeyboardAvoidingView
-      style={[s.screen, { paddingTop: insets.top }]}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      {title ? (
-        <View style={s.header}>
-          {onBack ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Back"
-              onPress={onBack}
-              style={s.headerAction}
-            >
-              <ChevronLeft size={22} color={colors.text} />
-            </Pressable>
-          ) : null}
-          <Text style={[s.headerTitle, !onBack && s.tabTitle]}>{title}</Text>
-          {trailing ? <View style={s.trailing}>{trailing}</View> : null}
-        </View>
-      ) : null}
-      {scroll ? (
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={s.content}
-        >
-          {children}
-        </ScrollView>
-      ) : (
-        children
-      )}
-      {footer ? (
-        <View
-          style={[
-            s.footer,
-            { paddingBottom: Math.max(insets.bottom, spacing.md) },
-          ]}
-        >
-          {footer}
-        </View>
-      ) : null}
-    </KeyboardAvoidingView>
+    <Guidance>
+      <KeyboardAvoidingView
+        style={[
+          s.screen,
+          {
+            paddingTop: insets.top,
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+            paddingBottom: footer || inTabs ? 0 : insets.bottom,
+          },
+        ]}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        {title ? (
+          <View style={s.header}>
+            {onBack ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Back"
+                onPress={onBack}
+                style={s.headerAction}
+              >
+                <ChevronLeft size={22} color={colors.text} />
+              </Pressable>
+            ) : null}
+            <GuideTarget name={title}>
+              <Text
+                style={[
+                  s.headerTitle,
+                  onBack && { marginHorizontal: 36 },
+                  !onBack && s.tabTitle,
+                ]}
+              >
+                {title}
+              </Text>
+            </GuideTarget>
+            {trailing ? <View style={s.trailing}>{trailing}</View> : null}
+          </View>
+        ) : null}
+        {scroll ? (
+          <GuidedScroll contentContainerStyle={s.content}>
+            {children}
+          </GuidedScroll>
+        ) : (
+          children
+        )}
+        {footer ? (
+          <View
+            style={[
+              s.footer,
+              { paddingBottom: Math.max(insets.bottom, spacing.md) },
+            ]}
+          >
+            {footer}
+          </View>
+        ) : null}
+      </KeyboardAvoidingView>
+    </Guidance>
   );
 }
 const createStyles = (colors: Palette) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.bg },
     header: {
-      minHeight: 48,
+      minHeight: 56,
       justifyContent: "center",
-      paddingHorizontal: spacing.md,
+      paddingHorizontal: 22,
     },
     headerAction: {
       position: "absolute",
@@ -229,6 +289,7 @@ const createStyles = (colors: Palette) =>
     group: { marginBottom: spacing.md },
     label: { color: colors.text, fontSize: 13, marginBottom: 6 },
     input: {
+      fontFamily: "JakartaRegular",
       minHeight: 50,
       backgroundColor: colors.surface,
       borderColor: colors.border,

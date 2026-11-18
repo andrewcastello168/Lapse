@@ -1,3 +1,4 @@
+import { CalendarError } from '../expiration/calendar.js';
 import {
   ArgumentsHost,
   Catch,
@@ -11,6 +12,10 @@ export class DatabaseExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger('HTTP');
   catch(error: unknown, host: ArgumentsHost) {
     const response = host.switchToHttp().getResponse<Response>();
+    if (error instanceof CalendarError) {
+      response.status(400).json({ statusCode: 400, message: error.message });
+      return;
+    }
     if (error instanceof HttpException) {
       const body = error.getResponse();
       response

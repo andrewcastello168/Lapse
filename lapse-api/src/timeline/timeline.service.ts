@@ -2,10 +2,8 @@ import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { DATABASE } from '../database/database.js';
 import {
+  eventsFor,
   addDays,
-  derived,
-  firstIndex,
-  intervalOf,
   occurrence,
   parseDate,
   todayInZone,
@@ -15,64 +13,7 @@ import type { UserItemRow } from '../expiration/models.js';
 import { withImages } from '../catalog-images.js';
 import { QueryTimelineDto } from './query-timeline.dto.js';
 
-export function eventsFor(
-  items: UserItemRow[],
-  from: string,
-  to: string,
-  zone: string,
-) {
-  const events: {
-    userItemId: string;
-    masterItemId: string | number | null;
-    categoryId: number;
-    itemName: string;
-    expiryType: string;
-    occurrenceDate: string;
-    projected: boolean;
-    image_path?: string | null;
-    category_image_path?: string | null;
-    renewalMode?: string | null;
-  }[] = [];
-  for (const item of items) {
-    if (item.expiry_type === 'NEVER' || !item.expiry_date) continue;
-    const add = (date: string) =>
-      events.push({
-        userItemId: item.id,
-        masterItemId: item.mi_id,
-        categoryId: item.mc_id,
-        itemName: item.item_name,
-        expiryType: item.expiry_type,
-        occurrenceDate: date,
-        projected: false,
-        image_path: item.image_path,
-        category_image_path: item.category_image_path,
-        renewalMode: item.renewal_mode,
-      });
-    if (item.expiry_type === 'ONCE' || item.renewal_mode === 'MANUAL') {
-      const date = derived(item, zone).effective_expiry_date;
-      if (date && date >= from && date <= to) add(date);
-      continue;
-    }
-    const interval = intervalOf(item);
-    for (let n = firstIndex(item.expiry_date, interval, from); ; n++) {
-      let date: string;
-      try {
-        date = occurrence(item.expiry_date, interval, n);
-      } catch {
-        break;
-      }
-      if (date > to) break;
-      add(date);
-      if (events.length > 100000)
-        throw new BadRequestException('Choose a shorter timeline range');
-    }
-  }
-  return events.sort(
-    (a, b) =>
-      a.occurrenceDate.localeCompare(b.occurrenceDate) ||
-      a.userItemId.localeCompare(b.userItemId),
-  );
-}
+export { eventsFor } from '../expiration/calendar.js';
 @Injectable()
 export class TimelineService {
   constructor(@Inject(DATABASE) private readonly db: Knex) {}

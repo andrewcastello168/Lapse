@@ -1,3 +1,6 @@
+import { randomBytes } from 'node:crypto';
+import type { Response } from 'express';
+import { resetPage } from './reset-page.js';
 import {
   Body,
   Controller,
@@ -6,6 +9,7 @@ import {
   Patch,
   Post,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
@@ -24,6 +28,17 @@ import type { AuthenticatedRequest } from './request.js';
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+  @Get('reset') resetPage(@Res() response: Response) {
+    const nonce = randomBytes(18).toString('base64');
+    response
+      .set({
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+      })
+      .type('html')
+      .send(resetPage(nonce));
+  }
   @Post('signup') @UseGuards(AuthRateGuard) signup(@Body() body: SignupDto) {
     return this.authService.signup(body);
   }

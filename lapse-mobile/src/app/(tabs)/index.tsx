@@ -1,6 +1,8 @@
+import { GuideTarget } from "@/components/guidance";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Image, Pressable, ScrollView, View } from "react-native";
+import { Text } from "@/components/typography";
 import { Bell, ChevronRight } from "lucide-react-native";
 import { Screen, SectionTitle } from "@/components/ui";
 import { Feedback } from "@/components/feedback";
@@ -102,18 +104,25 @@ export default function Home() {
           marginBottom: 20,
         }}
       >
-        <Image
-          source={require("@/assets/images/branding/logo-mark.png")}
-          style={{ width: 32, height: 32 }}
-        />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Notifications"
-          onPress={() => router.push("/notifications")}
-          style={{ padding: 10 }}
-        >
-          <Bell color={c.text} size={22} />
-        </Pressable>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Image
+            source={require("@/assets/images/branding/logo-mark.png")}
+            style={{ width: 32, height: 32 }}
+          />
+          <Text style={{ color: c.text, fontSize: 24, fontWeight: "700" }}>
+            lapse.
+          </Text>
+        </View>
+        <GuideTarget name="Notifications">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Notifications"
+            onPress={() => router.push("/notifications")}
+            style={{ padding: 10 }}
+          >
+            <Bell color={c.text} size={22} />
+          </Pressable>
+        </GuideTarget>
       </View>
       <Text
         style={{
@@ -124,7 +133,9 @@ export default function Home() {
         }}
       >
         Good {hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"}{" "}
-        <Text style={{ fontSize: 24 }}>☀</Text>
+        <Text style={{ fontSize: 24 }}>
+          {hour < 6 || hour >= 18 ? "\u263e" : hour < 12 ? "\u2600" : "\u25d0"}
+        </Text>
       </Text>
       <Text
         style={{ color: c.muted, fontSize: 14, marginTop: 7, marginBottom: 22 }}
@@ -132,42 +143,44 @@ export default function Home() {
         Here’s what’s coming up
         {user?.name ? `, ${user.name.split(" ")[0]}` : ""}.
       </Text>
-      <View
-        style={{
-          flexDirection: "row",
-          padding: 4,
-          borderRadius: 15,
-          backgroundColor: c.surface2,
-          marginBottom: 20,
-        }}
-      >
-        {windows.map(([value, label]) => (
-          <Pressable
-            key={value}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: window === value }}
-            onPress={() => setWindow(value)}
-            style={{
-              flex: 1,
-              minHeight: 37,
-              borderRadius: 12,
-              alignItems: "center",
-              justifyContent: "center",
-              backgroundColor: window === value ? c.accent : "transparent",
-            }}
-          >
-            <Text
+      <GuideTarget name="Date filters">
+        <View
+          style={{
+            flexDirection: "row",
+            padding: 4,
+            borderRadius: 15,
+            backgroundColor: c.surface2,
+            marginBottom: 20,
+          }}
+        >
+          {windows.map(([value, label]) => (
+            <Pressable
+              key={value}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: window === value }}
+              onPress={() => setWindow(value)}
               style={{
-                color: window === value ? "white" : c.muted,
-                fontSize: 12,
-                fontWeight: "600",
+                flex: 1,
+                minHeight: 37,
+                borderRadius: 12,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: window === value ? c.accent : "transparent",
               }}
             >
-              {label}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+              <Text
+                style={{
+                  color: window === value ? "white" : c.muted,
+                  fontSize: 12,
+                  fontWeight: "600",
+                }}
+              >
+                {label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </GuideTarget>
       <Feedback
         loading={loading}
         error={error}

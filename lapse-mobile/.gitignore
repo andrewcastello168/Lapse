@@ -42,3 +42,6 @@ example
 /ios
 /android
 .env
+# Native push client configuration (owner supplied)
+google-services.json
+GoogleService-Info.plist

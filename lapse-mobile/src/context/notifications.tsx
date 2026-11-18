@@ -1,3 +1,7 @@
+import Constants from "expo-constants";
+import { reminderTransport } from "@/services/reminder-transport";
+import { readLocal, writeLocal } from "@/utils/local";
+import { registerPush, sendTestPush } from "@/services/push-device";
 import {
   createContext,
   useCallback,
@@ -30,6 +34,11 @@ const Context = createContext({
   sync: async () => {},
   requestPermission: async () => {},
   markRead: async (_id: string) => {},
+  markAllRead: async () => {},
+  unread: 0,
+  testing: false,
+  testMessage: "",
+  testPush: async () => {},
 });
 export function NotificationsProvider({
   children,
@@ -46,11 +55,16 @@ export function NotificationsProvider({
 function DeviceNotifications({ children }: { children: React.ReactNode }) {
   const { user, initializing } = useAuth();
   const prefs = usePreferences();
+  const updatePreferences = prefs.update;
+  const [testing, setTesting] = useState(false);
+  const [testMessage, setTestMessage] = useState("");
   const [status, setStatus] = useState<Permission>("undetermined");
   const [error, setError] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [inbox, setInbox] = useState<InboxEntry[]>([]);
   const generation = useRef(0);
+  const remoteHydrated = useRef(false);
+  const serverActive = useRef(false);
   const inboxRef = useRef<InboxEntry[]>([]);
   const merge = useCallback(
     async (entry: InboxEntry) => {
@@ -74,6 +88,89 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
     if (initializing || !prefs.ready) return;
     const version = ++generation.current;
     try {
+      if (user) {
+        serverActive.current =
+          (await readLocal(`lapse.push.${user.id}`)) === "active";
+        try {
+          const remote = await api.notificationPreferences();
+          const allowed = await permission();
+          setStatus(allowed);
+          const registered =
+            allowed === "granted" && prefs.remindersEnabled
+              ? await registerPush(true, {
+                  enabled: prefs.remindersEnabled,
+                  offsets: prefs.reminderOffsets,
+                  hour: prefs.reminderHour,
+                  timezone: prefs.timezone,
+                })
+              : false;
+          if (allowed === "denied" || !prefs.remindersEnabled)
+            await registerPush(false);
+          if (remote.configured) {
+            if (!remoteHydrated.current) {
+              remoteHydrated.current = true;
+              if (remote.initialized) {
+                updatePreferences({
+                  remindersEnabled: remote.enabled,
+                  reminderOffsets: remote.offsets,
+                  reminderHour: remote.hour,
+                });
+                return;
+              }
+            }
+            await api.saveNotificationPreferences({
+              enabled: prefs.remindersEnabled,
+              offsets: prefs.reminderOffsets,
+              hour: prefs.reminderHour,
+              timezone: prefs.timezone,
+            });
+            if (
+              version !== generation.current ||
+              getSession()?.user.id !== user.id
+            )
+              return;
+            const remoteInbox = await api.notificationInbox();
+            const entries: InboxEntry[] = remoteInbox.data.map((row) => ({
+              id: row.id,
+              itemId: row.item_id ?? "",
+              title: row.title,
+              body: row.body,
+              date: row.created_at,
+              read: !!row.read_at,
+            }));
+            inboxRef.current = entries;
+            setInbox(entries);
+            setStatus(allowed);
+            if (
+              reminderTransport(
+                true,
+                registered &&
+                  (await readLocal(`lapse.push.verified.${user.id}`)) ===
+                    "received",
+                serverActive.current,
+              ) === "server"
+            ) {
+              serverActive.current = true;
+              await writeLocal(`lapse.push.${user.id}`, "active");
+              await reconcileReminders([]);
+              return;
+            }
+          } else {
+            serverActive.current = false;
+            await writeLocal(`lapse.push.${user.id}`, "inactive");
+          }
+        } catch {
+          if (
+            reminderTransport(null, false, serverActive.current) === "server"
+          ) {
+            setError(
+              "Server reminders are registered. Unable to refresh settings; please retry when connected",
+            );
+            return;
+          }
+          /* Preserve the functioning local path until push registers. */
+        }
+      }
       if (!user || !prefs.remindersEnabled) {
         await reconcileReminders([]);
         return;
@@ -106,12 +203,10 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
         plan.data,
         inboxRef.current.map((row) => row.id),
       );
-    } catch (reason) {
+    } catch {
       if (version === generation.current)
         setError(
-          reason instanceof Error
-            ? reason.message
-            : "Unable to update reminders",
+          "Unable to update reminders. Check your connection and native notification settings",
         );
     } finally {
       if (version === generation.current) setSyncing(false);
@@ -119,8 +214,10 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
   }, [
     initializing,
     prefs.ready,
+    updatePreferences,
     prefs.remindersEnabled,
     prefs.reminderOffset,
+    prefs.reminderOffsets,
     prefs.reminderHour,
     prefs.timezone,
     user,
@@ -154,10 +251,17 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
     const app = AppState.addEventListener("change", (state) => {
       if (state === "active") void sync();
     });
+    const tokens =
+      Platform.OS !== "web" && Constants.executionEnvironment !== "storeClient"
+        ? Notifications.addPushTokenListener(() => {
+            void sync();
+          })
+        : null;
     const timer = setInterval(() => {
       if (AppState.currentState === "active") void sync();
     }, 6 * 3600000);
     return () => {
+      tokens?.remove();
       unsubscribe();
       app.remove();
       clearInterval(timer);
@@ -166,7 +270,13 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
     };
   }, [sync]);
   useEffect(() => {
-    if (Platform.OS === "web") return;
+    if (
+      initializing ||
+      !user ||
+      Platform.OS === "web" ||
+      Constants.executionEnvironment === "storeClient"
+    )
+      return;
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
         shouldPlaySound: true,
@@ -179,37 +289,59 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
       (notification) => {
         const entry = inboxEntry(notification);
         if (entry) void merge(entry);
+        if (
+          user &&
+          notification.request.content.data?.test === true &&
+          entry?.id.startsWith(user.id + ":")
+        ) {
+          setTestMessage(
+            "Remote push received on this device. Scheduled dispatch remains disabled.",
+          );
+          void writeLocal(`lapse.push.verified.${user.id}`, "received").catch(
+            () => {},
+          );
+        }
       },
     );
     const open = (response: Notifications.NotificationResponse) => {
       const entry = inboxEntry(response.notification);
       if (entry && user && entry.id.startsWith(user.id + ":")) {
+        if (response.notification.request.content.data?.test === true) {
+          setTestMessage("Remote push opened on this device.");
+          void writeLocal(`lapse.push.verified.${user.id}`, "received").catch(
+            () => {},
+          );
+        }
+        if (!entry.itemId) {
+          router.push("/notifications");
+          return;
+        }
         void merge(entry);
         router.push({ pathname: "/item/[id]", params: { id: entry.itemId } });
       }
     };
     const response =
       Notifications.addNotificationResponseReceivedListener(open);
-    void Notifications.getLastNotificationResponseAsync().then((last) => {
-      if (last) {
-        open(last);
-        void Notifications.clearLastNotificationResponseAsync();
-      }
-    });
+    void Notifications.getLastNotificationResponseAsync()
+      .then((last) => {
+        if (last) {
+          open(last);
+          void Notifications.clearLastNotificationResponseAsync();
+        }
+      })
+      .catch(() => {});
     return () => {
       received.remove();
       response.remove();
     };
-  }, [merge, user]);
+  }, [merge, user, initializing]);
   const requestPermission = async () => {
     try {
       setStatus(await permission(true));
       await sync();
-    } catch (reason) {
+    } catch {
       setError(
-        reason instanceof Error
-          ? reason.message
-          : "Unable to request notification permission",
+        "Unable to enable notifications. Check device settings and use a matching native build",
       );
     }
   };
@@ -221,6 +353,7 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
     inboxRef.current = entries;
     setInbox(entries);
     try {
+      await api.readNotification(id).catch(() => {});
       await writeInbox(user.id, entries);
     } catch {
       setError("Unable to save the reminder inbox on this device");
@@ -230,12 +363,53 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
     <Context.Provider
       value={{
         permission: status,
+        testing,
+        testMessage,
+        testPush: async () => {
+          if (testing) return;
+          setTesting(true);
+          setTestMessage(
+            "Registering this device and submitting one remote test...",
+          );
+          try {
+            const result = await sendTestPush();
+            setTestMessage((current) =>
+              current.startsWith("Remote push received")
+                ? current
+                : (result.message ?? "Test submitted; check your device."),
+            );
+          } catch (reason) {
+            setTestMessage(
+              reason instanceof Error
+                ? reason.message
+                : "Unable to test remote push. Please retry.",
+            );
+          } finally {
+            setTesting(false);
+          }
+        },
         error,
         syncing,
         inbox,
         sync,
         requestPermission,
         markRead,
+        unread: inbox.filter((row) => !row.read).length,
+        markAllRead: async () => {
+          if (!user) return;
+          try {
+            await api.readNotification();
+            const entries = inboxRef.current.map((row) => ({
+              ...row,
+              read: true,
+            }));
+            inboxRef.current = entries;
+            setInbox(entries);
+            await writeInbox(user.id, entries);
+          } catch {
+            setError("Unable to mark reminders read. Please retry");
+          }
+        },
       }}
     >
       {children}

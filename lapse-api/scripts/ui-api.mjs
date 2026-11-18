@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+import { NotificationsModule } from '../dist/notifications/notifications.module.js';
 // Real API/controllers and real PostgreSQL; all UI fixtures live in an outer
 // transaction which is rolled back when this process exits. No response mocks.
 import 'reflect-metadata';
@@ -28,9 +30,13 @@ async function close() {
 process.on('SIGINT', close);
 process.on('SIGTERM', close);
 try {
+  await createRequire(import.meta.url)(
+    '../migrations/202611160001_notifications.cjs',
+  ).up(trx);
   const module = await Test.createTestingModule({
     imports: [
       AuthModule,
+      NotificationsModule,
       UserItemsModule,
       TimelineModule,
       CategoriesModule,

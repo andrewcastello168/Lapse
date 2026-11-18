@@ -1,3 +1,4 @@
+import Constants from "expo-constants";
 import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
@@ -31,10 +32,15 @@ export async function writeInbox(userId: string, entries: InboxEntry[]) {
 }
 export async function permission(request = false) {
   if (Platform.OS === "web") return "unsupported" as const;
+  if (
+    Platform.OS === "android" &&
+    Constants.executionEnvironment === "storeClient"
+  )
+    return "unsupported" as const;
   if (Platform.OS === "android")
     await Notifications.setNotificationChannelAsync("renewals", {
       name: "Expiration reminders",
-      importance: Notifications.AndroidImportance.DEFAULT,
+      importance: 3,
       lightColor: "#007E58",
     });
   let result = await Notifications.getPermissionsAsync();

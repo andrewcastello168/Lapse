@@ -1,5 +1,6 @@
 import { router } from "expo-router";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { Text } from "@/components/typography";
 import { Bell, ChevronRight } from "lucide-react-native";
 import { Screen } from "@/components/ui";
 import { Feedback } from "@/components/feedback";
@@ -20,7 +21,7 @@ export default function NotificationsScreen() {
     .sort((a, b) => (a.days_remaining ?? 0) - (b.days_remaining ?? 0));
   return (
     <Screen
-      title="Notifications"
+      title={`Notifications (${local.unread} unread)`}
       onBack={() =>
         router.canGoBack() ? router.back() : router.replace("/(tabs)")
       }
@@ -121,6 +122,13 @@ export default function NotificationsScreen() {
           >
             Recent reminders
           </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void local.markAllRead()}
+            style={{ padding: 14 }}
+          >
+            <Text style={{ color: c.accentDark }}>Mark all read</Text>
+          </Pressable>
           {local.inbox.map((entry) => {
             const item = items.find((row) => row.id === entry.itemId);
             return (
@@ -129,6 +137,7 @@ export default function NotificationsScreen() {
                 accessibilityRole="button"
                 onPress={() => {
                   void local.markRead(entry.id);
+                  if (!entry.itemId || !item) return;
                   router.push({
                     pathname: "/item/[id]",
                     params: { id: entry.itemId },

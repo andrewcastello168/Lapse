@@ -1,3 +1,5 @@
+import { NotificationsService } from '../src/notifications/notifications.service.js';
+import { vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import type { Server } from 'node:http';
@@ -8,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import request from 'supertest';
 import knex, { type Knex } from 'knex';
+import { NotificationsModule } from '../src/notifications/notifications.module.js';
 import { AuthModule } from '../src/auth/auth.module.js';
 import { UserItemsModule } from '../src/user-items/user-items.module.js';
 import { TimelineModule } from '../src/timeline/timeline.module.js';
@@ -86,9 +89,15 @@ describe.skipIf(process.env.RUN_DB_TESTS !== '1')(
         acquireConnectionTimeout: 30000,
       });
       trx = await db.transaction();
+      const require = createRequire(import.meta.url);
+      await require('../migrations/202611160001_notifications.cjs').up(trx);
+      await require('../migrations/202611170001_edge_notifications.cjs').up(
+        trx,
+      );
       const module = await Test.createTestingModule({
         imports: [
           AuthModule,
+          NotificationsModule,
           UserItemsModule,
           TimelineModule,
           CategoriesModule,
@@ -152,6 +161,18 @@ describe.skipIf(process.env.RUN_DB_TESTS !== '1')(
         [method](path)
         .set('Authorization', 'Bearer ' + token)
         .set('X-Timezone', 'Asia/Jakarta');
+    it('serves the secure HTTPS reset fallback without exposing tokens in HTML', async () => {
+      const page = await request(server)
+        .get('/auth/reset?token=example')
+        .expect(200);
+      expect(page.headers['cache-control']).toBe('no-store');
+      expect(page.headers['referrer-policy']).toBe('no-referrer');
+      expect(page.headers['content-security-policy']).toContain(
+        "frame-ancestors 'none'",
+      );
+      expect(page.text).toContain('Confirm password');
+      expect(page.text).not.toContain('token=example');
+    });
     it('validates runtime auth DTOs and isolates catalogs/items', async () => {
       await request(server)
         .post('/auth/signup')
@@ -313,6 +334,335 @@ describe.skipIf(process.env.RUN_DB_TESTS !== '1')(
           (row: { itemId: string }) => row.itemId === auto.body.id,
         ),
       ).toBe(false);
+    });
+    it('persists owned notification preferences, device transfers and inbox reads', async () => {
+      const deviceId = randomUUID();
+      await request(server)
+        .patch('/notifications/preferences')
+        .set('Authorization', 'Bearer ' + access)
+        .send({
+          enabled: true,
+          offsets: [7, 1, 0],
+          hour: 9,
+          timezone: 'Asia/Kathmandu',
+        })
+        .expect(200);
+      const pref = await request(server)
+        .get('/notifications/preferences')
+        .set('Authorization', 'Bearer ' + access)
+        .expect(200);
+      expect(pref.body.offsets).toEqual([7, 1, 0]);
+      await request(server)
+        .patch('/notifications/preferences')
+        .set('Authorization', 'Bearer ' + access)
+        .send({ enabled: true, offsets: [2], hour: 9, timezone: 'UTC' })
+        .expect(400);
+      await request(server)
+        .post('/notifications/devices')
+        .set('Authorization', 'Bearer ' + access)
+        .send({
+          id: deviceId,
+          token: 'ExpoPushToken[test_token]',
+          enabled: true,
+        })
+        .expect(200);
+      await request(server)
+        .delete('/notifications/devices/' + deviceId)
+        .set('Authorization', 'Bearer ' + other)
+        .expect(200);
+      expect(
+        await trx('notification_devices').where('id', deviceId).first(),
+      ).toBeDefined();
+      const id = userId + ':test';
+      await trx('notification_inbox').insert({
+        id,
+        user_id: userId,
+        item_id: itemId,
+        title: 'Test reminder',
+        body: 'Due today',
+      });
+      const inbox = await request(server)
+        .get('/notifications')
+        .set('Authorization', 'Bearer ' + access)
+        .expect(200);
+      expect(inbox.body.unread).toBe(1);
+      await request(server)
+        .post('/notifications/read')
+        .set('Authorization', 'Bearer ' + other)
+        .send({ id })
+        .expect(200);
+      expect(
+        (await trx('notification_inbox').where({ id }).first()).read_at,
+      ).toBeNull();
+      await request(server)
+        .post('/notifications/read')
+        .set('Authorization', 'Bearer ' + access)
+        .send({})
+        .expect(200);
+      expect(
+        (await trx('notification_inbox').where({ id }).first()).read_at,
+      ).not.toBeNull();
+      await request(server)
+        .get('/notifications/items/' + itemId)
+        .set('Authorization', 'Bearer ' + other)
+        .expect(404);
+      await request(server)
+        .patch('/notifications/items/' + itemId)
+        .set('Authorization', 'Bearer ' + access)
+        .send({ mode: 'DISABLED', offsets: [] })
+        .expect(200);
+      await request(server)
+        .post('/internal/notifications/dispatch')
+        .send({})
+        .expect(401);
+      await request(server)
+        .delete('/notifications/devices/' + deviceId)
+        .set('Authorization', 'Bearer ' + access)
+        .expect(200);
+      expect(
+        await trx('notification_devices').where('id', deviceId).first(),
+      ).toBeUndefined();
+    });
+    it('claims delivery once, handles partial failure and receipts without changing anchors', async () => {
+      const push = app.get(NotificationsService);
+      const now = new Date(),
+        due = todayInZone('UTC');
+      const created = await request(server)
+        .post('/user-items')
+        .set('Authorization', 'Bearer ' + access)
+        .send({
+          mcId: category,
+          itemName: 'Push fixture',
+          expiryType: 'ONCE',
+          expiryDate: due,
+        })
+        .expect(201);
+      await push.savePreferences(userId, {
+        enabled: true,
+        offsets: [0],
+        hour: now.getUTCHours(),
+        timezone: 'UTC',
+      });
+      const deviceA = randomUUID(),
+        deviceB = randomUUID();
+      await push.device(userId, {
+        id: deviceA,
+        token: 'ExpoPushToken[device_a]',
+        enabled: true,
+      });
+      await push.device(userId, {
+        id: deviceB,
+        token: 'ExpoPushToken[device_b]',
+        enabled: true,
+      });
+      const transport = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [
+              { status: 'ok', id: 'ticket-a' },
+              { status: 'error', details: { error: 'DeviceNotRegistered' } },
+            ],
+          }),
+        ),
+      );
+      const previous = process.env.REMOTE_PUSH_ENABLED;
+      process.env.REMOTE_PUSH_ENABLED = 'true';
+      try {
+        await Promise.all([push.dispatch(), push.dispatch()]);
+        expect(transport).toHaveBeenCalledTimes(1);
+        expect(
+          await trx('notification_attempts').where('state', 'accepted'),
+        ).toHaveLength(1);
+        expect(
+          await trx('notification_devices').where({
+            user_id: userId,
+            enabled: false,
+          }),
+        ).toHaveLength(1);
+        await trx('notification_preferences')
+          .where('user_id', userId)
+          .update({ next_check_at: new Date(0) });
+        await push.dispatch();
+        expect(transport).toHaveBeenCalledTimes(1);
+        await trx('notification_attempts')
+          .where('state', 'accepted')
+          .update({ updated_at: new Date(Date.now() - 20 * 60000) });
+        transport.mockResolvedValue(
+          new Response(
+            JSON.stringify({ data: { 'ticket-a': { status: 'ok' } } }),
+          ),
+        );
+        await push.dispatch();
+        expect(
+          await trx('notification_attempts').where('state', 'receipt_ok'),
+        ).toHaveLength(1);
+        expect(
+          (await trx('user_items').where('id', created.body.id).first())
+            .expiry_date,
+        ).toBe(due);
+        const retryDevice = randomUUID();
+        await push.device(userId, {
+          id: retryDevice,
+          token: 'ExpoPushToken[rate_retry]',
+          enabled: true,
+        });
+        transport.mockImplementation(
+          async () =>
+            new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    status: 'error',
+                    details: { error: 'MessageRateExceeded' },
+                  },
+                ],
+              }),
+            ),
+        );
+        const beforeRetries = transport.mock.calls.length;
+        for (let n = 0; n < 4; n++) {
+          await trx('notification_preferences')
+            .where('user_id', userId)
+            .update({ next_check_at: new Date(0) });
+          await push.dispatch();
+        }
+        expect(transport.mock.calls.length - beforeRetries).toBe(3);
+        expect(
+          (
+            await trx('notification_attempts')
+              .where('device_id', retryDevice)
+              .first()
+          ).attempt_count,
+        ).toBe(3);
+        await request(server)
+          .delete('/user-items/' + created.body.id)
+          .set('Authorization', 'Bearer ' + access)
+          .expect(200);
+        expect(
+          (
+            await trx('notification_inbox')
+              .where('id', userId + ':' + created.body.id + ':' + due + ':0')
+              .first()
+          ).item_id,
+        ).toBeNull();
+      } finally {
+        transport.mockRestore();
+        if (previous === undefined) delete process.env.REMOTE_PUSH_ENABLED;
+        else process.env.REMOTE_PUSH_ENABLED = previous;
+      }
+    }, 60000);
+    it('reuses notification tables for Edge RPC claims, permissions and persistent test cooldown', async () => {
+      const edgeDevice = randomUUID(),
+        testId = randomUUID();
+      await trx.raw(
+        'select public.lapse_push_register(?::uuid,?::uuid,?,true,?::jsonb,0)',
+        [
+          userId,
+          edgeDevice,
+          'ExpoPushToken[edge_owned]',
+          JSON.stringify({
+            enabled: true,
+            offsets: [7, 1, 0],
+            hour: 9,
+            timezone: 'UTC',
+          }),
+        ],
+      );
+      const claim = {
+        kind: 'test',
+        userId,
+        userVersion: 0,
+        deviceId: edgeDevice,
+        requestId: testId,
+        title: 'Test',
+        body: 'Test',
+      };
+      const call = async (rows: unknown[]) =>
+        (
+          await trx.raw('select public.lapse_push_claim(?::jsonb) as data', [
+            JSON.stringify(rows),
+          ])
+        ).rows[0].data;
+      const first = await call([claim]);
+      expect(first[0].token).toBe('ExpoPushToken[edge_owned]');
+      expect((await call([claim]))[0].replayed).toBe(true);
+      await expect(
+        trx.transaction(async (savepoint) =>
+          savepoint.raw('select public.lapse_push_claim(?::jsonb)', [
+            JSON.stringify([{ ...claim, requestId: randomUUID() }]),
+          ]),
+        ),
+      ).rejects.toThrow('test cooldown');
+      const privilege = await trx.raw(
+        "select has_function_privilege('anon','public.lapse_push_claim(jsonb)','EXECUTE') as allowed",
+      );
+      expect(privilege.rows[0].allowed).toBe(false);
+      await trx.raw('select public.lapse_push_results(?::jsonb)', [
+        JSON.stringify([
+          {
+            id: first[0].id,
+            deviceId: edgeDevice,
+            state: 'accepted',
+            ticket: 'edge-ticket',
+          },
+        ]),
+      ]);
+      expect(
+        (
+          await trx('notification_attempts')
+            .where('device_id', edgeDevice)
+            .first()
+        ).state,
+      ).toBe('accepted');
+      const created = await request(server)
+        .post('/user-items')
+        .set('Authorization', 'Bearer ' + access)
+        .send({
+          mcId: category,
+          itemName: 'Edge snapshot',
+          expiryType: 'ONCE',
+          expiryDate: '2030-01-31',
+        })
+        .expect(201);
+      const snapshot = (
+        await trx.raw(
+          'select to_jsonb(ui) as data from user_items ui where id=?',
+          [created.body.id],
+        )
+      ).rows[0].data;
+      const pref = await trx('notification_preferences')
+        .where('user_id', userId)
+        .first();
+      const reminder = {
+        kind: 'reminder',
+        userId,
+        deviceId: edgeDevice,
+        itemId: created.body.id,
+        occurrence: '2030-01-31',
+        offset: 0,
+        title: 'Due',
+        body: 'Due',
+        itemSnapshot: snapshot,
+        preferenceSnapshot: {
+          enabled: pref.enabled,
+          offsets: pref.offsets,
+          hour: pref.hour,
+          timezone: pref.timezone,
+        },
+        overrideSnapshot: { mode: 'INHERIT', offsets: [] },
+      };
+      expect(await call([reminder])).toHaveLength(1);
+      expect(await call([reminder])).toHaveLength(0);
+      await trx('user_items')
+        .where('id', created.body.id)
+        .update({ item_name: 'Edited fixture' });
+      expect(
+        await call([{ ...reminder, occurrence: '2030-02-01' }]),
+      ).toHaveLength(0);
+      expect(
+        (await trx('user_items').where('id', created.body.id).first())
+          .expiry_date,
+      ).toBe('2030-01-31');
     });
     it('rotates refresh tokens, persists reuse revocation and completes one-use SMTP reset', async () => {
       const rotated = (

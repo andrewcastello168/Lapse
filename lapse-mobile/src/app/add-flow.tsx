@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { BackHandler, Pressable, Text, TextInput, View } from "react-native";
+import { BackHandler, Pressable, View } from "react-native";
+import { Text, TextInput } from "@/components/typography";
 import { Check, ChevronRight, Plus, Search } from "lucide-react-native";
 import { Button, Input, Screen } from "@/components/ui";
 import { Feedback } from "@/components/feedback";

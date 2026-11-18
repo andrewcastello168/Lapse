@@ -8,6 +8,8 @@
     "scheme": "lapsemobile",
     "userInterfaceStyle": "automatic",
     "android": {
+      "package": "com.andrew.lapse",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#082832",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -47,6 +49,17 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "b52420ca-6177-40c7-b054-c75a8b6e2086"
+      }
+    },
+    "owner": "andrewcastello168"
   }
 }

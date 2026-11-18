@@ -3,7 +3,7 @@ const test = require("node:test"),
   fs = require("node:fs"),
   vm = require("node:vm"),
   ts = require("typescript");
-function loadApi(fetch) {
+function loadApi(fetch, timer = setTimeout) {
   const exports = {},
     writes = [];
   const source = ts.transpileModule(
@@ -23,6 +23,9 @@ function loadApi(fetch) {
     }),
     process: { env: { EXPO_PUBLIC_API_URL: "https://api.example.test" } },
     fetch,
+    AbortController,
+    setTimeout: timer,
+    clearTimeout,
     Intl,
     URLSearchParams,
     Set,
@@ -104,4 +107,41 @@ test("a late refresh cannot restore a logged-out account", async () => {
   await request;
   assert.equal(loaded.exports.getSession(), null);
   assert.equal(loaded.writes.length, 0);
+});
+
+test("unreachable login has a finite timeout, never retries credentials, and retains the session", async () => {
+  let attempts = 0;
+  const loaded = loadApi(
+    () => {
+      attempts++;
+      return new Promise(() => {});
+    },
+    (fn) => setTimeout(fn, 1),
+  );
+  await assert.rejects(
+    loaded.api.login({
+      email: "user@example.test",
+      password: "entered-password",
+    }),
+    /Unable to connect to the server. Please try again./,
+  );
+  assert.equal(attempts, 1);
+  assert.equal(loaded.exports.getSession().user.id, "owner");
+});
+test("safe reads retry once on a transient connection failure", async () => {
+  let calls = 0;
+  const loaded = loadApi(async () => {
+    if (++calls === 1) throw new Error("offline");
+    return response(200, []);
+  });
+  assert.deepEqual(Array.from(await loaded.api.userItems()), []);
+  assert.equal(calls, 2);
+});
+test("network failure during refresh never clears stored authentication", async () => {
+  const loaded = loadApi(async (url) => {
+    if (url.endsWith("/auth/refresh")) throw new Error("offline");
+    return response(401, {});
+  });
+  await assert.rejects(loaded.api.me(), /Unable to connect to the server/);
+  assert.equal(loaded.exports.getSession().refreshToken, "old-refresh");
 });

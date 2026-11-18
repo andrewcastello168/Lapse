@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Platform, Pressable, Text, TextInput, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
+import { Text, TextInput } from "@/components/typography";
 import { CalendarDays } from "lucide-react-native";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
 import { usePreferences } from "@/context/preferences";

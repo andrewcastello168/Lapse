@@ -1,6 +1,7 @@
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { Text } from "@/components/typography";
 import { Screen } from "@/components/ui";
 import { Feedback } from "@/components/feedback";
 import { StorageImage } from "@/components/storage-image";

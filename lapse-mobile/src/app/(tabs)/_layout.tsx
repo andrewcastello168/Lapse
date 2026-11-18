@@ -39,16 +39,17 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        tabBarHideOnKeyboard: true,
         tabBarActiveTintColor: c.accentDark,
         tabBarInactiveTintColor: c.muted,
         tabBarStyle: {
           backgroundColor: c.bg,
           borderTopColor: c.border,
-          height: 62 + bottom,
+          height: 64 + bottom,
           paddingBottom: bottom,
           paddingTop: 7,
         },
-        tabBarLabelStyle: { fontSize: 10, fontWeight: "600" },
+        tabBarLabelStyle: { fontSize: 10, fontFamily: "JakartaSemibold" },
         tabBarItemStyle: { minHeight: 48 },
       }}
     >
@@ -86,7 +87,6 @@ export default function TabsLayout() {
                 borderRadius: 22,
                 alignItems: "center",
                 justifyContent: "center",
-                marginTop: 6,
               }}
             >
               <Plus color="white" size={26} />

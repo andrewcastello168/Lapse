@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { router } from "expo-router";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { Text } from "@/components/typography";
 import {
   Bell,
   CalendarDays,
@@ -31,6 +32,7 @@ export default function SettingsHome() {
     { label: "Timezone", Icon: Globe, section: "timezone", value: timezone },
     { label: "Security", Icon: Shield, section: "password", value: "" },
     { label: "About Lapse", Icon: Info, section: "about", value: "" },
+    { label: "Help & Support", Icon: Info, section: "help", value: "" },
   ];
   return (
     <Screen title="Settings">
@@ -80,7 +82,9 @@ export default function SettingsHome() {
             key={section}
             accessibilityRole="button"
             onPress={() =>
-              router.push({ pathname: "/settings", params: { section } })
+              section === "help"
+                ? router.push("/help")
+                : router.push({ pathname: "/settings", params: { section } })
             }
             style={{
               flexDirection: "row",

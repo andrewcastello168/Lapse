@@ -1,15 +1,18 @@
+import { bounded } from "@/utils/local";
+import { reminderOffsetsOf, resolveTimezone } from "@/utils/preferences";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
   type ReactNode,
 } from "react";
-import { Platform, useColorScheme } from "react-native";
+import { AppState, Platform, useColorScheme } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { colors, lightColors, type Palette } from "@/constants/theme";
 import { useAuth } from "@/context/auth";
-import { setApiTimezone } from "@/services/api";
+import { api, setApiTimezone } from "@/services/api";
 export type Mode = "System" | "Light" | "Dark";
 export type Preferences = {
   mode: Mode;
@@ -17,9 +20,13 @@ export type Preferences = {
   reminderOffset: 1 | 3 | 7 | 30;
   reminderHour: number;
   timezone: string;
+  timezoneMode: "automatic" | "manual";
+  reminderOffsets: number[];
 };
 const defaults: Preferences = {
   mode: "Light",
+  timezoneMode: "automatic",
+  reminderOffsets: [7, 1, 0],
   remindersEnabled: true,
   reminderOffset: 7,
   reminderHour: 9,
@@ -62,25 +69,26 @@ function UserPreferences({
       Platform.OS === "web"
         ? Promise.resolve(globalThis.localStorage?.getItem(storageKey))
         : SecureStore.getItemAsync(storageKey);
-    read
+    bounded(read, null)
       .then((raw) => {
         if (!active || !raw) return;
         try {
           const saved = JSON.parse(raw) as Partial<Preferences> & {
             notifications?: boolean[];
           };
-          let zone = saved.timezone ?? initialZone;
-          try {
-            new Intl.DateTimeFormat("en", { timeZone: zone }).format();
-          } catch {
-            zone = defaults.timezone;
-          }
+          const resolved = resolveTimezone(
+            saved,
+            Intl.DateTimeFormat().resolvedOptions().timeZone || initialZone,
+            defaults.timezone,
+          );
           setValue({
             ...defaults,
             mode: ["System", "Light", "Dark"].includes(saved.mode ?? "")
               ? saved.mode!
               : defaults.mode,
-            timezone: zone,
+            timezone: resolved.timezone,
+            timezoneMode: resolved.mode as "automatic" | "manual",
+            reminderOffsets: reminderOffsetsOf(saved),
             remindersEnabled:
               typeof saved.remindersEnabled === "boolean"
                 ? saved.remindersEnabled
@@ -120,6 +128,30 @@ function UserPreferences({
     } else
       void SecureStore.setItemAsync(storageKey, serialized).catch(() => {});
   }, [ready, storageKey, value]);
+  useEffect(() => {
+    const refresh = () => {
+      if (!ready || value.timezoneMode !== "automatic") return;
+      const timezone =
+        Intl.DateTimeFormat().resolvedOptions().timeZone || value.timezone;
+      setValue((current) =>
+        current.timezone === timezone ? current : { ...current, timezone },
+      );
+    };
+    refresh();
+    const listener = AppState.addEventListener("change", (state) => {
+      if (state === "active") refresh();
+    });
+    return () => listener.remove();
+  }, [ready, value.timezoneMode, value.timezone]);
+  useEffect(() => {
+    if (ready && user && user.timezone !== value.timezone)
+      void api.profile({ timezone: value.timezone }).catch(() => {});
+  }, [ready, user, value.timezone]);
+  const update = useCallback(
+    (patch: Partial<Preferences>) =>
+      setValue((current) => ({ ...current, ...patch })),
+    [],
+  );
   const dark =
     value.mode === "Dark" || (value.mode === "System" && scheme === "dark");
   return (
@@ -129,7 +161,7 @@ function UserPreferences({
         ready,
         dark,
         colors: dark ? colors : lightColors,
-        update: (patch) => setValue((current) => ({ ...current, ...patch })),
+        update,
       }}
     >
       {children}

@@ -97,19 +97,67 @@ async function request<T>(
   path: string,
   init: RequestInit = {},
   retry = true,
+  origin = baseUrl,
 ): Promise<T> {
-  if (!baseUrl) throw new Error("Set EXPO_PUBLIC_API_URL to connect Lapse");
+  if (!origin)
+    throw new ApiError("Unable to connect to the server. Please try again.", 0);
   const token = session?.accessToken;
   const version = generation;
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Timezone": selectedTimezone,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init.headers,
-    },
-  });
+  const send = async () => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        (async () => {
+          const response = await fetch(`${origin}${path}`, {
+            ...init,
+            signal: controller.signal,
+            headers: {
+              "Content-Type": "application/json",
+              "X-Timezone": selectedTimezone,
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              ...init.headers,
+            },
+          });
+          // Keep response body reads inside the timeout too.
+          const body: unknown = await response.json().catch(() => null);
+          return {
+            status: response.status,
+            ok: response.ok,
+            json: async () => body,
+          };
+        })(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(
+              new ApiError(
+                "Unable to connect to the server. Please try again.",
+                0,
+              ),
+            );
+          }, 8000);
+        }),
+      ]);
+    } catch {
+      throw new ApiError(
+        "Unable to connect to the server. Please try again.",
+        0,
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+  // Retry a safe GET once. Never replay a credential, refresh or mutation POST
+  // after an ambiguous transport failure; retrying login is an explicit user action.
+  let response;
+  try {
+    response = await send();
+  } catch (error) {
+    if ((init.method ?? "GET") !== "GET" || generation !== version) throw error;
+    response = await send();
+  }
+
   if (
     response.status === 401 &&
     retry &&
@@ -120,7 +168,7 @@ async function request<T>(
     if (generation !== version)
       throw new ApiError("Your session changed. Please try again", 401);
     if (session.accessToken === token) await refresh();
-    return request<T>(path, init, false);
+    return request<T>(path, init, false, origin);
   }
   if (!response.ok) {
     const body = (await response
@@ -129,9 +177,11 @@ async function request<T>(
       message?: string | string[];
     };
     throw new ApiError(
-      Array.isArray(body.message)
-        ? body.message.join(", ")
-        : (body.message ?? "Request failed"),
+      response.status >= 500
+        ? "Service temporarily unavailable. Please try again later"
+        : Array.isArray(body.message)
+          ? body.message.join(", ")
+          : (body.message ?? "Request failed"),
       response.status,
     );
   }
@@ -146,7 +196,82 @@ async function mutation<T>(path: string, method: string, body?: unknown) {
   changes.forEach((fn) => fn({ itemId }));
   return result;
 }
+const edgeOrigin = (process.env.EXPO_PUBLIC_SUPABASE_URL ?? "").replace(
+  /\/$/,
+  "",
+);
+export const notificationRequest = <T>(
+  action: string,
+  body: Record<string, unknown> = {},
+) =>
+  request<T>(
+    "/functions/v1/notifications",
+    { method: "POST", body: JSON.stringify({ action, ...body }) },
+    true,
+    edgeOrigin,
+  );
 export const api = {
+  notificationPreferences: () =>
+    notificationRequest<{
+      configured: boolean;
+      initialized: boolean;
+      enabled: boolean;
+      offsets: number[];
+      hour: number;
+      timezone: string;
+    }>("preferences"),
+  saveNotificationPreferences: (body: {
+    enabled: boolean;
+    offsets: number[];
+    hour: number;
+    timezone: string;
+  }) => notificationRequest("save-preferences", { preferences: body }),
+  registerDevice: (body: {
+    id: string;
+    token: string;
+    enabled: boolean;
+    preferences: {
+      enabled: boolean;
+      offsets: number[];
+      hour: number;
+      timezone: string;
+    };
+  }) =>
+    notificationRequest<{ registered: boolean; configured: boolean }>(
+      "register",
+      {
+        deviceId: body.id,
+        token: body.token,
+        enabled: body.enabled,
+        preferences: body.preferences,
+      },
+    ),
+  removeDevice: (id: string) =>
+    notificationRequest("unregister", { deviceId: id }),
+  notificationInbox: () =>
+    notificationRequest<{
+      unread: number;
+      data: {
+        id: string;
+        item_id: string | null;
+        title: string;
+        body: string;
+        created_at: string;
+        read_at: string | null;
+      }[];
+    }>("inbox"),
+  readNotification: (id?: string) =>
+    notificationRequest("read", id ? { id } : {}),
+  itemNotificationPreferences: (id: string) =>
+    request<{ mode: string; offsets: number[] }>(`/notifications/items/${id}`),
+  saveItemNotificationPreferences: (
+    id: string,
+    body: { mode: string; offsets: number[] },
+  ) =>
+    request(`/notifications/items/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   signup: (body: { name: string; email: string; password: string }) =>
     request<{ message: string; user: SessionUser }>(
       "/auth/signup",

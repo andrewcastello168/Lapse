@@ -1,4 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
+// Runtime-compatible domain code shared directly by Nest and Supabase Edge.
+export class CalendarError extends Error {
+  readonly statusCode = 400;
+}
 
 export type Interval = { years: number; months: number; days: number };
 export type Schedule = {
@@ -17,9 +20,7 @@ export function parseDate(value: string): Date {
     !Number.isFinite(date.getTime()) ||
     date.toISOString().slice(0, 10) !== value
   )
-    throw new BadRequestException(
-      'Use a valid calendar date in YYYY-MM-DD format',
-    );
+    throw new CalendarError('Use a valid calendar date in YYYY-MM-DD format');
   return date;
 }
 export function dateOnly(date: Date): string {
@@ -28,18 +29,16 @@ export function dateOnly(date: Date): string {
     date.getUTCFullYear() > 9999 ||
     date.getUTCFullYear() < 1
   )
-    throw new BadRequestException(
-      'The schedule exceeds supported calendar dates',
-    );
+    throw new CalendarError('The schedule exceeds supported calendar dates');
   return date.toISOString().slice(0, 10);
 }
 export function timezone(value = 'UTC'): string {
   if (!/^(?:UTC|GMT|[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+)$/.test(value))
-    throw new BadRequestException('Choose a valid IANA timezone');
+    throw new CalendarError('Choose a valid IANA timezone');
   try {
     new Intl.DateTimeFormat('en', { timeZone: value }).format();
   } catch {
-    throw new BadRequestException('Choose a valid IANA timezone');
+    throw new CalendarError('Choose a valid IANA timezone');
   }
   return value;
 }
@@ -95,7 +94,7 @@ export function firstIndex(
     ) ||
     !Object.values(interval).some((n) => n > 0)
   )
-    throw new BadRequestException(
+    throw new CalendarError(
       'Recurrence components must be 0–999 with at least one positive component',
     );
   if (anchor >= from) return 0;
@@ -133,10 +132,7 @@ export function nextOccurrence(
       ? occurrence(item.expiry_date, interval, index + 1)
       : date;
   } catch (error) {
-    if (
-      error instanceof BadRequestException &&
-      error.message.includes('exceeds')
-    )
+    if (error instanceof CalendarError && error.message.includes('exceeds'))
       return null;
     throw error;
   }
@@ -211,4 +207,109 @@ export function zonedInstant(
     timestamp += desired - wall;
   }
   return new Date(timestamp).toISOString();
+}
+
+export type CalendarItem = Schedule & {
+  id: string;
+  user_id?: string;
+  mi_id: string | number | null;
+  mc_id: number;
+  item_name: string;
+  image_path?: string | null;
+  category_image_path?: string | null;
+};
+export function eventsFor(
+  items: CalendarItem[],
+  from: string,
+  to: string,
+  zone: string,
+) {
+  const events: {
+    userItemId: string;
+    masterItemId: string | number | null;
+    categoryId: number;
+    itemName: string;
+    expiryType: string;
+    occurrenceDate: string;
+    projected: boolean;
+    image_path?: string | null;
+    category_image_path?: string | null;
+    renewalMode?: string | null;
+  }[] = [];
+  for (const item of items) {
+    if (item.expiry_type === 'NEVER' || !item.expiry_date) continue;
+    const add = (date: string) =>
+      events.push({
+        userItemId: item.id,
+        masterItemId: item.mi_id,
+        categoryId: item.mc_id,
+        itemName: item.item_name,
+        expiryType: item.expiry_type,
+        occurrenceDate: date,
+        projected: false,
+        image_path: item.image_path,
+        category_image_path: item.category_image_path,
+        renewalMode: item.renewal_mode,
+      });
+    if (item.expiry_type === 'ONCE' || item.renewal_mode === 'MANUAL') {
+      const date = derived(item, zone).effective_expiry_date;
+      if (date && date >= from && date <= to) add(date);
+      continue;
+    }
+    const interval = intervalOf(item);
+    for (let n = firstIndex(item.expiry_date, interval, from); ; n++) {
+      let date: string;
+      try {
+        date = occurrence(item.expiry_date, interval, n);
+      } catch {
+        break;
+      }
+      if (date > to) break;
+      add(date);
+      if (events.length > 100000)
+        throw new CalendarError('Choose a shorter timeline range');
+    }
+  }
+  return events.sort(
+    (a, b) =>
+      a.occurrenceDate.localeCompare(b.occurrenceDate) ||
+      a.userItemId.localeCompare(b.userItemId),
+  );
+}
+
+export const OFFSETS = [0, 1, 3, 7, 14, 30];
+export type DeliveryPreferences = {
+  enabled: boolean;
+  offsets: number[];
+  hour: number;
+  timezone: string;
+};
+export function deliveryPlan(
+  items: CalendarItem[],
+  prefs: DeliveryPreferences,
+  now = Date.now(),
+) {
+  if (!prefs.enabled) return [];
+  // Two-hour recovery window: covers fractional offsets and one missed hourly run.
+  const from = todayInZone(prefs.timezone, new Date(now - 2 * 3600000));
+  const to = addDays(todayInZone(prefs.timezone, new Date(now)), 30);
+  return eventsFor(items, from, to, prefs.timezone)
+    .flatMap((event) =>
+      prefs.offsets.map((offset) => ({
+        itemId: event.userItemId,
+        name: event.itemName,
+        occurrence: event.occurrenceDate,
+        offset,
+        instant: zonedInstant(
+          addDays(event.occurrenceDate, -offset),
+          prefs.hour,
+          prefs.timezone,
+        ),
+      })),
+    )
+    .filter(
+      (row) =>
+        Date.parse(row.instant) <= now &&
+        Date.parse(row.instant) > now - 2 * 3600000,
+    );
 }

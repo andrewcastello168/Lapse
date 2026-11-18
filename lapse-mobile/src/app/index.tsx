@@ -1,13 +1,31 @@
-import { router } from "expo-router";
-import { useState } from "react";
-import { Image, Pressable, Text, View } from "react-native";
+import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useRef, useState } from "react";
+import { Image, Pressable, ScrollView, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CalendarCheck } from "lucide-react-native";
+import { Text } from "@/components/typography";
 import { Button } from "@/components/ui";
 import { useThemeColors } from "@/context/preferences";
+import { readLocal, writeLocal } from "@/utils/local";
 export default function Welcome() {
   const c = useThemeColors();
-  const [page, setPage] = useState(0);
+  const { intro } = useLocalSearchParams<{ intro?: string }>();
+  const [page, setPage] = useState(0),
+    [width, setWidth] = useState(320);
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  useEffect(() => {
+    void readLocal("lapse.onboarding.v2").then((done) => {
+      if (done && intro !== "1") router.replace("/auth?mode=signin");
+    });
+  }, [intro]);
+  const go = (index: number) => {
+    setPage(index);
+    scroll.current?.scrollTo({ x: index * width, animated: false });
+  };
+  const finish = (signin = false) => {
+    void writeLocal("lapse.onboarding.v2", "done");
+    router.push(signin ? "/auth?mode=signin" : "/auth?mode=signup");
+  };
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.bg }}>
       <View
@@ -16,117 +34,146 @@ export default function Welcome() {
           width: "100%",
           maxWidth: 480,
           alignSelf: "center",
-          padding: 28,
+          padding: 24,
         }}
+        onLayout={(event) => setWidth(event.nativeEvent.layout.width - 48)}
       >
-        <View
-          style={{
-            flex: 1,
-            justifyContent: "center",
-            alignItems: "center",
-            paddingBottom: 30,
-          }}
-        >
-          {page === 1 ? (
-            <View
-              style={{
-                width: 166,
-                height: 166,
-                backgroundColor: c.accentTint,
-                borderRadius: 48,
-                alignItems: "center",
-                justifyContent: "center",
-                transform: [{ rotate: "-8deg" }],
-                marginBottom: 38,
-              }}
-            >
-              <CalendarCheck size={108} color={c.accent} strokeWidth={1.3} />
-            </View>
-          ) : (
-            <>
-              <Image
-                source={require("@/assets/images/branding/logo-mark.png")}
-                style={{ width: 96, height: 96, marginBottom: 20 }}
-              />
-              <Text
-                style={{
-                  color: c.text,
-                  fontWeight: "800",
-                  fontSize: 52,
-                  letterSpacing: -2,
-                  marginBottom: 38,
-                }}
-              >
-                lapse.
-              </Text>
-            </>
-          )}
-          <Text
-            style={{
-              fontSize: 29,
-              fontWeight: "700",
-              letterSpacing: -0.8,
-              lineHeight: 34,
-              textAlign: "center",
-              color: c.text,
-            }}
-          >
-            {page === 1
-              ? "Never miss a\nrenewal again."
-              : "Stay ahead of\nexpiration."}
-          </Text>
-          <Text
-            style={{
-              fontSize: 15,
-              lineHeight: 23,
-              textAlign: "center",
-              color: c.muted,
-              maxWidth: 275,
-              marginTop: 16,
-            }}
-          >
-            {page === 1
-              ? "Get timely reminders for subscriptions, documents, and important deadlines."
-              : "Track subscriptions, documents, licenses, and more in one place."}
-          </Text>
-          <View style={{ flexDirection: "row", gap: 7, marginTop: 28 }}>
-            {[0, 1].map((index) => (
-              <Pressable
-                key={index}
-                accessibilityRole="button"
-                accessibilityLabel={`Introduction ${index + 1}`}
-                onPress={() => setPage(index)}
-                hitSlop={12}
-              >
-                <View
-                  style={{
-                    height: 6,
-                    width: 6,
-                    borderRadius: 3,
-                    backgroundColor: index === page ? c.accent : c.border,
-                  }}
-                />
-              </Pressable>
-            ))}
-          </View>
-        </View>
-        <Button
-          title={page === 0 ? "Get started" : "Create account"}
-          onPress={() =>
-            page === 0 ? setPage(1) : router.push("/auth?mode=signup")
-          }
-        />
         <Pressable
           accessibilityRole="button"
-          onPress={() => router.push("/auth?mode=signin")}
-          style={{ padding: 18, alignItems: "center" }}
+          onPress={() => finish()}
+          style={{ alignSelf: "flex-end", padding: 12 }}
         >
-          <Text
-            style={{ fontSize: 13, fontWeight: "600", color: c.accentDark }}
-          >
-            I already have an account
-          </Text>
+          <Text style={{ color: c.accentDark }}>Skip</Text>
         </Pressable>
+        <ScrollView
+          ref={scroll}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={(event) =>
+            setPage(
+              Math.max(
+                0,
+                Math.min(
+                  1,
+                  Math.round(event.nativeEvent.contentOffset.x / width),
+                ),
+              ),
+            )
+          }
+        >
+          {[0, 1].map((index) => (
+            <View
+              key={index}
+              style={{
+                width,
+                justifyContent: "center",
+                alignItems: "center",
+                paddingHorizontal: 12,
+              }}
+            >
+              {index === 0 ? (
+                <>
+                  <Image
+                    source={require("../../assets/images/branding/logo-mark.png")}
+                    style={{ width: 96, height: 96, marginBottom: 16 }}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 48,
+                      color: c.text,
+                      fontWeight: "700",
+                      marginBottom: 26,
+                    }}
+                  >
+                    lapse.
+                  </Text>
+                </>
+              ) : (
+                <View
+                  style={{
+                    padding: 25,
+                    backgroundColor: c.accentTint,
+                    borderRadius: 40,
+                    marginBottom: 36,
+                  }}
+                >
+                  <CalendarCheck size={100} color={c.accent} />
+                </View>
+              )}
+              <Text
+                style={{
+                  fontSize: 28,
+                  fontWeight: "600",
+                  lineHeight: 35,
+                  textAlign: "center",
+                  color: c.text,
+                }}
+              >
+                {index === 0
+                  ? "Stay ahead of expiration."
+                  : "Never miss a renewal again."}
+              </Text>
+              <Text
+                style={{
+                  color: c.muted,
+                  fontSize: 15,
+                  lineHeight: 24,
+                  textAlign: "center",
+                  marginTop: 16,
+                }}
+              >
+                {index === 0
+                  ? "Track subscriptions, documents, licenses, and more in one place."
+                  : "Get timely reminders for subscriptions, documents, and important deadlines."}
+              </Text>
+            </View>
+          ))}
+        </ScrollView>
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "center",
+            marginVertical: 14,
+          }}
+        >
+          {[0, 1].map((n) => (
+            <Pressable
+              key={n}
+              accessibilityRole="button"
+              accessibilityLabel={`Introduction ${n + 1}`}
+              accessibilityState={{ selected: page === n }}
+              onPress={() => go(n)}
+              style={{ padding: 16 }}
+            >
+              <View
+                style={{
+                  height: 7,
+                  width: 7,
+                  borderRadius: 4,
+                  backgroundColor: page === n ? c.accent : c.border,
+                }}
+              />
+            </Pressable>
+          ))}
+        </View>
+        {page > 0 ? (
+          <Button
+            title="Back"
+            variant="secondary"
+            onPress={() => go(page - 1)}
+          />
+        ) : null}
+        <Button
+          title={page === 0 ? "Continue" : "Get Started"}
+          onPress={() => (page === 0 ? go(1) : finish())}
+        />
+        <Button
+          title="I already have an account"
+          variant="secondary"
+          onPress={() => finish(true)}
+        />
       </View>
     </SafeAreaView>
   );

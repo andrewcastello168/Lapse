@@ -1,13 +1,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useMemo, useState, useEffect } from "react";
-import {
-  FlatList,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { FlatList, Pressable, ScrollView, View } from "react-native";
+import { Text, TextInput } from "@/components/typography";
 import { Search } from "lucide-react-native";
 import { Screen } from "@/components/ui";
 import { Feedback } from "@/components/feedback";

@@ -49,3 +49,13 @@ test("renewal replaces obsolete keys and delivered reminders do not replay", () 
     schedule: [],
   });
 });
+
+const { reminderTransport } = require("../src/services/reminder-transport.ts");
+test("upgrade retains local reminders until registration, and outages cannot create duplicate local queues", () => {
+  assert.equal(reminderTransport(false, false, false), "local");
+  assert.equal(reminderTransport(true, false, false), "local");
+  assert.equal(reminderTransport(true, true, false), "server");
+  assert.equal(reminderTransport(null, false, true), "server");
+  assert.equal(reminderTransport(true, false, true), "server");
+  assert.equal(reminderTransport(false, false, true), "local");
+});

@@ -85,6 +85,75 @@ const auth = (url) =>
     : url.includes("/notification_devices?")
       ? Response.json([{ id: deviceId }])
       : null;
+test("missing Edge secrets and database outages are service errors, not sign-in errors", async () => {
+  const req = await request({ action: "preferences" });
+  assert.equal((await create({ ...env, jwtSecret: "" })(req)).status, 503);
+  const handler = create(env, async () =>
+    Response.json({ code: "unavailable" }, { status: 503 }),
+  );
+  assert.equal(
+    (await handler(await request({ action: "preferences" }))).status,
+    503,
+  );
+});
+test("preferences persist before device registration while scheduling remains disabled", async () => {
+  let write;
+  const handler = create(env, async (url, init) => {
+    if (auth(url)) return auth(url);
+    write = { url, ...init };
+    return Response.json([]);
+  });
+  const value = {
+    enabled: true,
+    offsets: [0, 14],
+    hour: 17,
+    timezone: "Asia/Kathmandu",
+  };
+  assert.equal(
+    (
+      await handler(
+        await request({ action: "save-preferences", preferences: value }),
+      )
+    ).status,
+    200,
+  );
+  assert.equal(write.method, "POST");
+  assert.ok(write.headers.Prefer.includes("resolution=merge-duplicates"));
+  assert.equal(JSON.parse(write.body).user_id, user);
+  assert.deepEqual(JSON.parse(write.body).offsets, [0, 14]);
+  assert.equal(
+    (await (await handler(await request({ action: "preferences" }))).json())
+      .configured,
+    false,
+  );
+});
+test("device registration preserves verified owner/version and does not enable scheduling", async () => {
+  let registered;
+  const handler = create(env, async (url, init) => {
+    if (url.includes("/master_users?")) return auth(url);
+    assert.ok(url.includes("/rpc/lapse_push_register"));
+    registered = JSON.parse(init.body);
+    return Response.json(true);
+  });
+  const result = await handler(
+    await request({
+      action: "register",
+      deviceId,
+      token: "ExpoPushToken[owned]",
+      enabled: true,
+      preferences: {
+        enabled: true,
+        offsets: [7, 1, 0],
+        hour: 9,
+        timezone: "UTC",
+      },
+    }),
+  );
+  assert.equal(result.status, 200);
+  assert.equal((await result.json()).configured, false);
+  assert.equal(registered.p_user, user);
+  assert.equal(registered.p_version, 0);
+});
 test("Edge verifies existing custom JWT signature, expiry and revocation before provider work", async () => {
   await assert.rejects(
     verifyJwt(await jwt(undefined, "wrong-secret"), env.jwtSecret),

@@ -196,18 +196,16 @@ export function Screen({
                 <ChevronLeft size={22} color={colors.text} />
               </Pressable>
             ) : null}
-            <GuideTarget name={title}>
-              <Text
-                style={[
-                  s.headerTitle,
-                  onBack && { marginHorizontal: 36 },
-                  !onBack && s.tabTitle,
-                ]}
-              >
-                {title}
-              </Text>
-            </GuideTarget>
-            {trailing ? <View style={s.trailing}>{trailing}</View> : null}
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <GuideTarget name={title}>
+                <Text style={[s.headerTitle, !onBack && s.tabTitle]}>
+                  {title}
+                </Text>
+              </GuideTarget>
+            </View>
+            {trailing || onBack ? (
+              <View style={s.trailing}>{trailing}</View>
+            ) : null}
           </View>
         ) : null}
         {scroll ? (
@@ -233,15 +231,17 @@ export function Screen({
 }
 const createStyles = (colors: Palette) =>
   StyleSheet.create({
-    screen: { flex: 1, backgroundColor: colors.bg },
+    screen: { flex: 1, minHeight: 0, backgroundColor: colors.bg },
     header: {
       minHeight: 56,
+      flexShrink: 0,
+      flexDirection: "row",
+      alignItems: "center",
       justifyContent: "center",
-      paddingHorizontal: 22,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
     },
     headerAction: {
-      position: "absolute",
-      left: 4,
       width: 48,
       height: 48,
       alignItems: "center",
@@ -254,8 +254,8 @@ const createStyles = (colors: Palette) =>
       fontWeight: "700",
       textAlign: "center",
     },
-    tabTitle: { textAlign: "left", fontSize: 22 },
-    trailing: { position: "absolute", right: spacing.md },
+    tabTitle: { textAlign: "left", fontSize: 22, paddingHorizontal: 14 },
+    trailing: { minWidth: 48, alignItems: "center" },
     content: {
       flexGrow: 1,
       padding: 22,
@@ -266,6 +266,7 @@ const createStyles = (colors: Palette) =>
       paddingBottom: 28,
     },
     footer: {
+      flexShrink: 0,
       paddingHorizontal: spacing.md,
       paddingTop: spacing.sm,
       backgroundColor: colors.bg,

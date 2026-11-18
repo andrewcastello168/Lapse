@@ -98,6 +98,7 @@ async function request<T>(
   init: RequestInit = {},
   retry = true,
   origin = baseUrl,
+  timeoutMs = 8000,
 ): Promise<T> {
   if (!origin)
     throw new ApiError("Unable to connect to the server. Please try again.", 0);
@@ -136,7 +137,7 @@ async function request<T>(
                 0,
               ),
             );
-          }, 8000);
+          }, timeoutMs);
         }),
       ]);
     } catch {
@@ -168,17 +169,17 @@ async function request<T>(
     if (generation !== version)
       throw new ApiError("Your session changed. Please try again", 401);
     if (session.accessToken === token) await refresh();
-    return request<T>(path, init, false, origin);
+    return request<T>(path, init, false, origin, timeoutMs);
   }
   if (!response.ok) {
-    const body = (await response
-      .json()
-      .catch(() => ({ message: "Unable to connect. Please try again" }))) as {
+    const body = ((await response.json().catch(() => null)) ?? {}) as {
       message?: string | string[];
     };
     throw new ApiError(
       response.status >= 500
-        ? "Service temporarily unavailable. Please try again later"
+        ? path === "/auth/forgot-password"
+          ? "Password reset email is unavailable right now. Please try again later."
+          : "Service temporarily unavailable. Please try again later"
         : Array.isArray(body.message)
           ? body.message.join(", ")
           : (body.message ?? "Request failed"),
@@ -203,13 +204,34 @@ const edgeOrigin = (process.env.EXPO_PUBLIC_SUPABASE_URL ?? "").replace(
 export const notificationRequest = <T>(
   action: string,
   body: Record<string, unknown> = {},
+  timeoutMs = 8000,
 ) =>
   request<T>(
     "/functions/v1/notifications",
     { method: "POST", body: JSON.stringify({ action, ...body }) },
     true,
     edgeOrigin,
+    timeoutMs,
   );
+let preferenceWrite: Promise<unknown> = Promise.resolve();
+function saveNotificationPreferences(body: {
+  enabled: boolean;
+  offsets: number[];
+  hour: number;
+  timezone: string;
+}) {
+  const owner = session?.user.id;
+  const snapshot = { ...body, offsets: [...body.offsets] };
+  const next = preferenceWrite
+    .catch(() => {})
+    .then(() => {
+      if (!owner || session?.user.id !== owner)
+        throw new ApiError("Your session changed. Please try again", 401);
+      return notificationRequest("save-preferences", { preferences: snapshot });
+    });
+  preferenceWrite = next;
+  return next;
+}
 export const api = {
   notificationPreferences: () =>
     notificationRequest<{
@@ -220,12 +242,7 @@ export const api = {
       hour: number;
       timezone: string;
     }>("preferences"),
-  saveNotificationPreferences: (body: {
-    enabled: boolean;
-    offsets: number[];
-    hour: number;
-    timezone: string;
-  }) => notificationRequest("save-preferences", { preferences: body }),
+  saveNotificationPreferences,
   registerDevice: (body: {
     id: string;
     token: string;
@@ -270,7 +287,7 @@ export const api = {
   ) =>
     request(`/notifications/items/${id}`, {
       method: "PATCH",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ mode: body.mode, offsets: body.offsets }),
     }),
   signup: (body: { name: string; email: string; password: string }) =>
     request<{ message: string; user: SessionUser }>(
@@ -300,6 +317,8 @@ export const api = {
       "/auth/forgot-password",
       { method: "POST", body: JSON.stringify({ email }) },
       false,
+      baseUrl,
+      30000,
     ),
   resetPassword: (token: string, password: string) =>
     request<{ message: string }>(

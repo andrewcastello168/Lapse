@@ -1,7 +1,12 @@
 import { NotificationsService } from '../src/notifications/notifications.service.js';
 import { vi } from 'vitest';
 import { Test } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import {
+  INestApplication,
+  ValidationPipe,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { MailService } from '../src/auth/mail.service.js';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createServer } from 'node:net';
@@ -75,7 +80,9 @@ describe.skipIf(process.env.RUN_DB_TESTS !== '1')(
       process.env.SMTP_PORT = String((smtp.address() as AddressInfo).port);
       process.env.SMTP_FROM = 'Lapse <test@example.test>';
       process.env.SMTP_ALLOW_INSECURE = 'true';
-      process.env.PASSWORD_RESET_URL = 'lapsemobile://auth';
+      process.env.SMTP_USER = '';
+      process.env.SMTP_PASSWORD = '';
+      process.env.PASSWORD_RESET_URL = 'http://127.0.0.1/auth/reset';
       db = knex({
         client: 'pg',
         connection: {
@@ -90,8 +97,12 @@ describe.skipIf(process.env.RUN_DB_TESTS !== '1')(
       });
       trx = await db.transaction();
       const require = createRequire(import.meta.url);
-      await require('../migrations/202611160001_notifications.cjs').up(trx);
+      if (!(await trx.schema.hasTable('notification_preferences')))
+        await require('../migrations/202611160001_notifications.cjs').up(trx);
       await require('../migrations/202611170001_edge_notifications.cjs').up(
+        trx,
+      );
+      await require('../migrations/202611180001_edge_data_api_security.cjs').up(
         trx,
       );
       const module = await Test.createTestingModule({
@@ -161,6 +172,19 @@ describe.skipIf(process.env.RUN_DB_TESTS !== '1')(
         [method](path)
         .set('Authorization', 'Bearer ' + token)
         .set('X-Timezone', 'Asia/Jakarta');
+    it('restricts Data API tables to the service role without changing API ownership', async () => {
+      const result = await trx.raw(
+        "SELECT c.relname,c.relrowsecurity AS rls,has_table_privilege('anon',c.oid,'SELECT') AS anon_read,has_table_privilege('authenticated',c.oid,'SELECT') AS auth_read,has_table_privilege('service_role',c.oid,'SELECT') AS service_read FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('master_users','master_refresh_tokens','password_reset_tokens','user_items','notification_preferences','notification_devices')",
+      );
+      expect(result.rows).toHaveLength(6);
+      for (const row of result.rows)
+        expect(row).toMatchObject({
+          rls: true,
+          anon_read: false,
+          auth_read: false,
+          service_read: true,
+        });
+    });
     it('serves the secure HTTPS reset fallback without exposing tokens in HTML', async () => {
       const page = await request(server)
         .get('/auth/reset?token=example')
@@ -315,6 +339,18 @@ describe.skipIf(process.env.RUN_DB_TESTS !== '1')(
         .set('X-Timezone', 'invalid/zone')
         .expect(400);
       const plan = await auth('get', '/reminders?offset=7&hour=9').expect(200);
+      for (const offset of [0, 14]) {
+        const selectedPlan = await auth(
+          'get',
+          `/reminders?offset=${offset}&hour=9`,
+        ).expect(200);
+        expect(
+          selectedPlan.body.data.every(
+            (row: { offset: number }) => row.offset === offset,
+          ),
+        ).toBe(true);
+      }
+      await auth('get', '/reminders?offset=2&hour=9').expect(400);
       expect(
         plan.body.data.some(
           (row: { itemId: string }) => row.itemId === auto.body.id,
@@ -663,6 +699,34 @@ describe.skipIf(process.env.RUN_DB_TESTS !== '1')(
         (await trx('user_items').where('id', created.body.id).first())
           .expiry_date,
       ).toBe('2030-01-31');
+    });
+    it('reports failed reset delivery and removes the unusable reset token', async () => {
+      const failedEmail = 'smtp-failure-' + randomUUID() + '@example.test';
+      const created = await request(server)
+        .post('/auth/signup')
+        .send({ name: 'SMTP fixture', email: failedEmail, password })
+        .expect(201);
+      const mail = vi
+        .spyOn(MailService.prototype, 'passwordReset')
+        .mockRejectedValueOnce(
+          new ServiceUnavailableException(
+            'Password reset email could not be sent',
+          ),
+        );
+      try {
+        await request(server)
+          .post('/auth/forgot-password')
+          .send({ email: failedEmail })
+          .expect(503);
+        expect(
+          await trx('password_reset_tokens').where(
+            'user_id',
+            created.body.user.id,
+          ),
+        ).toHaveLength(0);
+      } finally {
+        mail.mockRestore();
+      }
     });
     it('rotates refresh tokens, persists reuse revocation and completes one-use SMTP reset', async () => {
       const rotated = (

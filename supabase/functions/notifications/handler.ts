@@ -112,6 +112,7 @@ export function createNotificationsHandler(
     path: string,
     method = "GET",
     body?: unknown,
+    prefer = "return=representation",
   ): Promise<T> => {
     const response = await transport(`${env.supabaseUrl}/rest/v1/${path}`, {
       method,
@@ -119,7 +120,7 @@ export function createNotificationsHandler(
         "Content-Type": "application/json",
         apikey: env.serviceKey,
         Authorization: `Bearer ${env.serviceKey}`,
-        Prefer: "return=representation",
+        Prefer: prefer,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(6000),
@@ -470,11 +471,17 @@ export function createNotificationsHandler(
         } catch {
           return reply(400, { message: "Invalid notification preferences" });
         }
-        await db(`notification_preferences?user_id=eq.${user.sub}`, "PATCH", {
-          ...pref,
-          item_cursor: null,
-          next_check_at: new Date().toISOString(),
-        });
+        await db(
+          `notification_preferences?on_conflict=user_id`,
+          "POST",
+          {
+            user_id: user.sub,
+            ...pref,
+            item_cursor: null,
+            next_check_at: new Date().toISOString(),
+          },
+          "resolution=merge-duplicates,return=representation",
+        );
         return reply(200, { saved: true });
       }
       if (body.action === "inbox") {

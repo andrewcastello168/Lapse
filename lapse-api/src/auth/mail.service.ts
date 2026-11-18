@@ -1,16 +1,43 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import nodemailer from 'nodemailer';
 @Injectable()
 export class MailService {
+  private readonly logger = new Logger(MailService.name);
   assertConfigured() {
+    const loopback =
+      process.env.SMTP_ALLOW_INSECURE === 'true' &&
+      ['localhost', '127.0.0.1'].includes(process.env.SMTP_HOST ?? '');
+    let validUrl = false;
+    try {
+      const url = new URL(process.env.PASSWORD_RESET_URL ?? '');
+      validUrl =
+        !url.username &&
+        !url.password &&
+        (url.protocol === 'https:' ||
+          (loopback &&
+            url.protocol === 'http:' &&
+            ['localhost', '127.0.0.1'].includes(url.hostname)));
+    } catch {
+      /* Configuration is diagnosed without logging a URL or credentials. */
+    }
     if (
       !process.env.SMTP_HOST ||
       !process.env.SMTP_FROM ||
-      !process.env.PASSWORD_RESET_URL
-    )
+      !validUrl ||
+      (!loopback && (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD)) ||
+      (![465, 587].includes(Number(process.env.SMTP_PORT ?? 587)) && !loopback)
+    ) {
+      this.logger.error(
+        'Password reset email configuration is incomplete or invalid',
+      );
       throw new ServiceUnavailableException(
         'Password reset email is temporarily unavailable',
       );
+    }
   }
   async passwordReset(email: string, token: string) {
     this.assertConfigured();
@@ -56,6 +83,7 @@ export class MailService {
         text: `Use this link to choose a new password:\n\n${url.toString()}\n\nThis link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.`,
       });
     } catch {
+      this.logger.error('Password reset SMTP delivery failed');
       throw new ServiceUnavailableException(
         'Password reset email could not be sent. Please try again later',
       );

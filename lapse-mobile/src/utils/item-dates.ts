@@ -1,6 +1,17 @@
 // Presentation and form/calendar validation only. All expiration, recurrence,
 // status and reminder calculations are owned by the API.
 export type Interval = { years: number; months: number; days: number };
+export function dateInZone(zone: string, now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
 export function dateOnly(date = new Date()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }

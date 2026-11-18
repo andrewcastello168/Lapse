@@ -30,7 +30,7 @@ async function close() {
 process.on('SIGINT', close);
 process.on('SIGTERM', close);
 try {
-  await createRequire(import.meta.url)(
+  if (!(await trx.schema.hasTable('notification_preferences'))) await createRequire(import.meta.url)(
     '../migrations/202611160001_notifications.cjs',
   ).up(trx);
   const module = await Test.createTestingModule({

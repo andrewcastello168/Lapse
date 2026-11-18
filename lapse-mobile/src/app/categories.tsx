@@ -77,7 +77,7 @@ export default function Categories() {
                   })
                 }
                 style={{
-                  width: "48%",
+                  flexBasis: "45%",
                   flexGrow: 1,
                   padding: 18,
                   minHeight: 90,

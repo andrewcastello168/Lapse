@@ -8,6 +8,6 @@ export class QueryTimelineDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100000) offset = 0;
 }
 export class ReminderQueryDto {
-  @IsOptional() @Type(() => Number) @IsIn([1, 3, 7, 30]) offset = 7;
+  @IsOptional() @Type(() => Number) @IsIn([0, 1, 3, 7, 14, 30]) offset = 7;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(23) hour = 9;
 }

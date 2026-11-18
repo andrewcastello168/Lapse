@@ -14,7 +14,7 @@ import { AppState, Platform } from "react-native";
 import { router } from "expo-router";
 import { useAuth } from "@/context/auth";
 import { usePreferences } from "@/context/preferences";
-import { api, getSession, subscribeItems } from "@/services/api";
+import { api, ApiError, getSession, subscribeItems } from "@/services/api";
 import {
   inboxEntry,
   cancelItemReminders,
@@ -87,14 +87,55 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
   const sync = useCallback(async () => {
     if (initializing || !prefs.ready) return;
     const version = ++generation.current;
+    setSyncing(true);
+    setError("");
+    const current = () =>
+      version === generation.current && getSession()?.user.id === user?.id;
     try {
+      const allowed = await permission();
+      if (!current()) return;
+      setStatus(allowed);
+      // Explicit disable and OS denial work even when remote requests fail.
+      if (!user || !prefs.remindersEnabled || allowed === "denied")
+        await reconcileReminders([]);
       if (user) {
         serverActive.current =
           (await readLocal(`lapse.push.${user.id}`)) === "active";
         try {
           const remote = await api.notificationPreferences();
-          const allowed = await permission();
-          setStatus(allowed);
+          if (!current()) return;
+          // Preferences/inbox do not depend on the scheduled-dispatch release gate.
+          if (!remoteHydrated.current) {
+            remoteHydrated.current = true;
+            if (remote.initialized && prefs.notificationRevision === 0) {
+              updatePreferences({
+                remindersEnabled: remote.enabled,
+                reminderOffsets: remote.offsets,
+                reminderHour: remote.hour,
+              });
+              return;
+            }
+          }
+          await api.saveNotificationPreferences({
+            enabled: prefs.remindersEnabled,
+            offsets: prefs.reminderOffsets,
+            hour: prefs.reminderHour,
+            timezone: prefs.timezone,
+          });
+          if (!current()) return;
+          const remoteInbox = await api.notificationInbox();
+          if (!current()) return;
+          const entries: InboxEntry[] = remoteInbox.data.map((row) => ({
+            id: row.id,
+            itemId: row.item_id ?? "",
+            title: row.title,
+            body: row.body,
+            date: row.created_at,
+            read: !!row.read_at,
+          }));
+          inboxRef.current = entries;
+          setInbox(entries);
+          await writeInbox(user.id, entries);
           const registered =
             allowed === "granted" && prefs.remindersEnabled
               ? await registerPush(true, {
@@ -104,109 +145,74 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
                   timezone: prefs.timezone,
                 })
               : false;
+          if (!current()) return;
           if (allowed === "denied" || !prefs.remindersEnabled)
             await registerPush(false);
-          if (remote.configured) {
-            if (!remoteHydrated.current) {
-              remoteHydrated.current = true;
-              if (remote.initialized) {
-                updatePreferences({
-                  remindersEnabled: remote.enabled,
-                  reminderOffsets: remote.offsets,
-                  reminderHour: remote.hour,
-                });
-                return;
-              }
-            }
-            await api.saveNotificationPreferences({
-              enabled: prefs.remindersEnabled,
-              offsets: prefs.reminderOffsets,
-              hour: prefs.reminderHour,
-              timezone: prefs.timezone,
-            });
-            if (
-              version !== generation.current ||
-              getSession()?.user.id !== user.id
-            )
-              return;
-            const remoteInbox = await api.notificationInbox();
-            const entries: InboxEntry[] = remoteInbox.data.map((row) => ({
-              id: row.id,
-              itemId: row.item_id ?? "",
-              title: row.title,
-              body: row.body,
-              date: row.created_at,
-              read: !!row.read_at,
-            }));
-            inboxRef.current = entries;
-            setInbox(entries);
-            setStatus(allowed);
-            if (
-              reminderTransport(
-                true,
-                registered &&
-                  (await readLocal(`lapse.push.verified.${user.id}`)) ===
-                    "received",
-                serverActive.current,
-              ) === "server"
-            ) {
-              serverActive.current = true;
-              await writeLocal(`lapse.push.${user.id}`, "active");
-              await reconcileReminders([]);
-              return;
-            }
-          } else {
+          if (!current()) return;
+          if (
+            reminderTransport(
+              remote.configured,
+              registered &&
+                (await readLocal(`lapse.push.verified.${user.id}`)) ===
+                  "received",
+              serverActive.current,
+            ) === "server"
+          ) {
+            serverActive.current = true;
+            await writeLocal(`lapse.push.${user.id}`, "active");
+            await reconcileReminders([]);
+            return;
+          }
+          if (!remote.configured) {
             serverActive.current = false;
             await writeLocal(`lapse.push.${user.id}`, "inactive");
           }
-        } catch {
-          if (
-            reminderTransport(null, false, serverActive.current) === "server"
-          ) {
-            setError(
-              "Server reminders are registered. Unable to refresh settings; please retry when connected",
-            );
+        } catch (reason) {
+          if (!current()) return;
+          setError(
+            reason instanceof ApiError && reason.status === 401
+              ? "Unable to confirm your notification session. Retry when connected. If this continues, sign in again."
+              : "Unable to sync notification settings. Your choices are kept on this device. Please retry.",
+          );
+          // An outage never reactivates a duplicate local queue after switching.
+          if (reminderTransport(null, false, serverActive.current) === "server")
             return;
-          }
-          /* Preserve the functioning local path until push registers. */
         }
       }
-      if (!user || !prefs.remindersEnabled) {
-        await reconcileReminders([]);
+      if (
+        !current() ||
+        !user ||
+        !prefs.remindersEnabled ||
+        allowed !== "granted"
+      )
         return;
-      }
-      const allowed = await permission();
-      if (version !== generation.current) return;
-      setSyncing(true);
-      setError("");
-      setStatus(allowed);
-      if (!user || !prefs.remindersEnabled || allowed !== "granted") {
-        await reconcileReminders([]);
-        return;
-      }
-      const plan = await api.reminders(
-        prefs.reminderOffset,
-        prefs.reminderHour,
-        prefs.timezone,
+      const plans = await Promise.all(
+        prefs.reminderOffsets.map((offset) =>
+          api.reminders(offset, prefs.reminderHour, prefs.timezone),
+        ),
       );
-      if (version !== generation.current || getSession()?.user.id !== user.id)
-        return;
+      const reminders = plans
+        .flatMap((plan) => plan.data)
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
+        .slice(0, 60);
+      if (!current()) return;
       if (Platform.OS !== "web") {
         const presented = await Notifications.getPresentedNotificationsAsync();
         for (const notification of presented) {
+          if (!current()) return;
           const entry = inboxEntry(notification);
           if (entry) await merge(entry);
         }
       }
-      if (version !== generation.current) return;
+      if (!current()) return;
       await reconcileReminders(
-        plan.data,
+        reminders,
         inboxRef.current.map((row) => row.id),
       );
     } catch {
-      if (version === generation.current)
+      if (current())
         setError(
-          "Unable to update reminders. Check your connection and native notification settings",
+          "Unable to update reminders. Check your connection and notification settings.",
         );
     } finally {
       if (version === generation.current) setSyncing(false);
@@ -214,9 +220,9 @@ function DeviceNotifications({ children }: { children: React.ReactNode }) {
   }, [
     initializing,
     prefs.ready,
+    prefs.notificationRevision,
     updatePreferences,
     prefs.remindersEnabled,
-    prefs.reminderOffset,
     prefs.reminderOffsets,
     prefs.reminderHour,
     prefs.timezone,

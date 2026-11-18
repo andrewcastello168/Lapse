@@ -16,8 +16,9 @@ import { Screen } from "@/components/ui";
 import { ConfirmSheet } from "@/components/confirm-sheet";
 import { useAuth } from "@/context/auth";
 import { usePreferences } from "@/context/preferences";
+import { offsetLabel } from "@/components/selection-row";
 export default function SettingsHome() {
-  const { colors: c, mode, timezone, reminderOffset } = usePreferences();
+  const { colors: c, mode, timezone, reminderOffsets } = usePreferences();
   const { user, signOut, loading } = useAuth();
   const [confirm, setConfirm] = useState(false);
   const rows = [
@@ -26,7 +27,7 @@ export default function SettingsHome() {
       label: "Default reminder",
       Icon: CalendarDays,
       section: "reminder",
-      value: reminderOffset + " days before",
+      value: reminderOffsets.map(offsetLabel).join(", "),
     },
     { label: "Appearance", Icon: Palette, section: "appearance", value: mode },
     { label: "Timezone", Icon: Globe, section: "timezone", value: timezone },

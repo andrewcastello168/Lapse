@@ -1,5 +1,11 @@
 import { Tabs, useRouter, usePathname } from "expo-router";
-import { Alert, BackHandler, Platform, View } from "react-native";
+import {
+  Alert,
+  BackHandler,
+  Platform,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import { useEffect } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -13,6 +19,7 @@ import { useThemeColors } from "@/context/preferences";
 export default function TabsLayout() {
   const c = useThemeColors();
   const inset = useSafeAreaInsets();
+  const { fontScale } = useWindowDimensions();
   const router = useRouter();
   const pathname = usePathname();
   useEffect(() => {
@@ -45,7 +52,7 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: c.bg,
           borderTopColor: c.border,
-          height: 64 + bottom,
+          height: Math.max(64, 48 + 14 * fontScale) + bottom,
           paddingBottom: bottom,
           paddingTop: 7,
         },

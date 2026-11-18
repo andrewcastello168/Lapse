@@ -37,6 +37,7 @@ const Context = createContext({
   ready: false,
   colors: lightColors as Palette,
   dark: false,
+  notificationRevision: 0,
   update: (_value: Partial<Preferences>) => {},
 });
 export function PreferencesProvider({ children }: { children: ReactNode }) {
@@ -63,6 +64,7 @@ function UserPreferences({
     timezone: user?.timezone ?? defaults.timezone,
   });
   const [ready, setReady] = useState(false);
+  const [notificationRevision, setNotificationRevision] = useState(0);
   useEffect(() => {
     let active = true;
     const read =
@@ -147,11 +149,15 @@ function UserPreferences({
     if (ready && user && user.timezone !== value.timezone)
       void api.profile({ timezone: value.timezone }).catch(() => {});
   }, [ready, user, value.timezone]);
-  const update = useCallback(
-    (patch: Partial<Preferences>) =>
-      setValue((current) => ({ ...current, ...patch })),
-    [],
-  );
+  const update = useCallback((patch: Partial<Preferences>) => {
+    if (
+      patch.remindersEnabled !== undefined ||
+      patch.reminderOffsets !== undefined ||
+      patch.reminderHour !== undefined
+    )
+      setNotificationRevision((current) => current + 1);
+    setValue((current) => ({ ...current, ...patch }));
+  }, []);
   const dark =
     value.mode === "Dark" || (value.mode === "System" && scheme === "dark");
   return (
@@ -159,6 +165,7 @@ function UserPreferences({
       value={{
         ...value,
         ready,
+        notificationRevision,
         dark,
         colors: dark ? colors : lightColors,
         update,

@@ -64,7 +64,7 @@ export function ItemRow({
         fallbackUri={item.category_image_url}
         size={44}
       />
-      <View style={{ flex: 1, gap: 4 }}>
+      <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
         <Text
           numberOfLines={1}
           style={{ color: c.text, fontSize: 15, fontWeight: "600" }}
@@ -76,7 +76,14 @@ export function ItemRow({
           {item.renewal_mode === "MANUAL" ? " · Manual" : ""}
         </Text>
       </View>
-      <View style={{ alignItems: "flex-end", gap: 5 }}>
+      <View
+        style={{
+          alignItems: "flex-end",
+          flexShrink: 1,
+          maxWidth: "45%",
+          gap: 5,
+        }}
+      >
         <DueBadge days={item.days_remaining} status={item.expiration_status} />
         {item.effective_expiry_date ? (
           <Text style={{ color: c.muted, fontSize: 11 }}>

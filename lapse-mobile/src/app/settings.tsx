@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Linking, Platform, Pressable, Switch, View } from "react-native";
 import { Text } from "@/components/typography";
 import { Check, ChevronRight, UserRound } from "lucide-react-native";
@@ -9,6 +9,13 @@ import { useAuth } from "@/context/auth";
 import { usePreferences, type Mode } from "@/context/preferences";
 import { useLocalNotifications } from "@/context/notifications";
 import { api } from "@/services/api";
+import { BottomSheet } from "@/components/bottom-sheet";
+import { SelectionRow, offsetLabel } from "@/components/selection-row";
+import {
+  timezoneCatalogue,
+  searchTimezones,
+  timezoneOffset,
+} from "@/utils/timezones";
 const titles: Record<string, string> = {
   profile: "Profile",
   edit: "Edit profile",
@@ -33,6 +40,8 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [showTime, setShowTime] = useState(false);
+  const [zoneLimit, setZoneLimit] = useState(50);
   const back = () =>
     router.canGoBack() ? router.back() : router.replace("/(tabs)/preferences");
   async function save() {
@@ -59,12 +68,14 @@ export default function Settings() {
       setBusy(false);
     }
   }
-  const supported = (
-    Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }
-  ).supportedValuesOf?.("timeZone") ?? [
-    Intl.DateTimeFormat().resolvedOptions().timeZone,
-    "UTC",
-  ];
+  const supported = useMemo(
+    () => timezoneCatalogue(prefs.timezone),
+    [prefs.timezone],
+  );
+  const matches = useMemo(
+    () => searchTimezones(supported, search),
+    [supported, search],
+  );
   const row = (
     label: string,
     value: string,
@@ -87,7 +98,17 @@ export default function Settings() {
     >
       <Text style={{ color: c.text, fontSize: 14, flex: 1 }}>{label}</Text>
       {value ? (
-        <Text style={{ color: c.muted, fontSize: 12 }}>{value}</Text>
+        <Text
+          style={{
+            color: c.muted,
+            fontSize: 12,
+            flexShrink: 1,
+            maxWidth: "55%",
+            textAlign: "right",
+          }}
+        >
+          {value}
+        </Text>
       ) : null}
       {selected ? (
         <Check size={19} color={c.accentDark} />
@@ -196,30 +217,43 @@ export default function Settings() {
       ) : null}
       {section === "notifications" ? (
         <>
-          <View style={{ marginTop: 20 }}>
-            <Button
-              title={
-                notifications.testing
-                  ? "Sending test push..."
-                  : "Send test push notification"
-              }
-              disabled={notifications.testing}
-              onPress={() => void notifications.testPush()}
-            />
-            <Text style={{ color: c.muted, lineHeight: 22, marginTop: 10 }}>
-              Use an Android Development Build on your physical device. This
-              sends one remote push through Supabase Edge and Expo; it does not
-              enable scheduled reminders.
-            </Text>
-            {notifications.testMessage ? (
-              <Text
-                accessibilityRole="alert"
-                style={{ color: c.text, lineHeight: 22, marginVertical: 12 }}
-              >
-                {notifications.testMessage}
+          {__DEV__ ? (
+            <View
+              style={{
+                marginTop: 20,
+                padding: 14,
+                borderWidth: 1,
+                borderColor: c.border,
+                borderRadius: 14,
+              }}
+            >
+              <Text style={{ color: c.muted, fontSize: 12 }}>
+                Development tools
               </Text>
-            ) : null}
-          </View>
+              <Button
+                title={
+                  notifications.testing
+                    ? "Sending test push..."
+                    : "Send test push notification"
+                }
+                disabled={notifications.testing}
+                onPress={() => void notifications.testPush()}
+              />
+              <Text style={{ color: c.muted, lineHeight: 22, marginTop: 10 }}>
+                Use an Android Development Build on your physical device. This
+                sends one remote push through Supabase Edge and Expo; it does
+                not enable scheduled reminders.
+              </Text>
+              {notifications.testMessage ? (
+                <Text
+                  accessibilityRole="alert"
+                  style={{ color: c.text, lineHeight: 22, marginVertical: 12 }}
+                >
+                  {notifications.testMessage}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
           <View
             style={{
               flexDirection: "row",
@@ -263,7 +297,7 @@ export default function Settings() {
             }}
           >
             {notifications.permission === "unsupported"
-              ? "Remote push testing requires a native development build; Expo Go supports ordinary UI development."
+              ? "Notifications are not available in this version on this device."
               : notifications.permission === "granted"
                 ? "Notifications are allowed on this device."
                 : notifications.permission === "denied"
@@ -281,8 +315,10 @@ export default function Settings() {
               onPress={() => void Linking.openSettings()}
             />
           ) : null}
-          {row("Default reminder", prefs.reminderOffset + " days before", () =>
-            router.push("/settings?section=reminder"),
+          {row(
+            "Default reminder",
+            prefs.reminderOffsets.map(offsetLabel).join(", "),
+            () => router.push("/settings?section=reminder"),
           )}
           {row("Notification inbox", "", () => router.push("/notifications"))}
           <Text
@@ -293,9 +329,8 @@ export default function Settings() {
               marginTop: 24,
             }}
           >
-            Server reminders work after secure device registration. Until
-            configured, this device keeps its existing local reminder queue.
-            Your device controls final delivery.
+            Choose when you’d like to be reminded. Your device’s notification
+            and battery settings can affect when reminders appear.
           </Text>
           {notifications.syncing ? (
             <Text style={{ color: c.accentDark, marginTop: 16 }}>
@@ -327,11 +362,13 @@ export default function Settings() {
           >
             Remind me before each due date
           </Text>
-          {([0, 1, 3, 7, 14, 30] as const).map((offset) =>
-            row(
-              offset + " " + (offset === 1 ? "day" : "days") + " before",
-              "",
-              () => {
+          {([0, 1, 3, 7, 14, 30] as const).map((offset) => (
+            <SelectionRow
+              key={offset}
+              label={offsetLabel(offset)}
+              multiple
+              selected={prefs.reminderOffsets.includes(offset)}
+              onPress={() => {
                 const offsets = prefs.reminderOffsets.includes(offset)
                   ? prefs.reminderOffsets.filter((n) => n !== offset)
                   : [...prefs.reminderOffsets, offset];
@@ -342,10 +379,9 @@ export default function Settings() {
                       ? { reminderOffset: offset as 1 | 3 | 7 | 30 }
                       : {}),
                   });
-              },
-              prefs.reminderOffsets.includes(offset),
-            ),
-          )}
+              }}
+            />
+          ))}
           <Text
             style={{
               color: c.text,
@@ -355,33 +391,65 @@ export default function Settings() {
               marginBottom: 10,
             }}
           >
-            Delivery time · {prefs.timezone}
+            Delivery time
           </Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            {Array.from({ length: 24 }, (_, n) => n).map((hour) => (
-              <Pressable
-                key={hour}
-                accessibilityRole="radio"
-                accessibilityState={{ checked: prefs.reminderHour === hour }}
-                onPress={() => prefs.update({ reminderHour: hour })}
-                style={{
-                  padding: 14,
-                  borderRadius: 12,
-                  backgroundColor:
-                    prefs.reminderHour === hour ? c.accentTint : c.surface2,
-                }}
+          {row(
+            "Reminder time",
+            `${String(prefs.reminderHour).padStart(2, "0")}:00`,
+            () => setShowTime(true),
+          )}
+          {row(
+            "Timezone",
+            `${prefs.timezone.replaceAll("_", " ")} · ${timezoneOffset(prefs.timezone)}`,
+            () => router.push("/settings?section=timezone"),
+          )}
+          <Text style={{ color: c.muted, lineHeight: 20, marginTop: 12 }}>
+            Changes are saved on this device automatically.
+          </Text>
+          {notifications.syncing ? (
+            <Text style={{ color: c.muted, marginTop: 12 }}>
+              Syncing reminders…
+            </Text>
+          ) : null}
+          {notifications.error ? (
+            <>
+              <Text
+                accessibilityRole="alert"
+                style={{ color: c.danger, marginTop: 12 }}
               >
-                <Text
-                  style={{
-                    color: prefs.reminderHour === hour ? c.accentDark : c.muted,
-                    fontSize: 13,
-                  }}
-                >
-                  {String(hour).padStart(2, "0")}:00
-                </Text>
-              </Pressable>
+                {notifications.error}
+              </Text>
+              <Button
+                title="Retry reminder sync"
+                variant="secondary"
+                onPress={() => void notifications.sync()}
+              />
+            </>
+          ) : null}
+          <BottomSheet visible={showTime} onClose={() => setShowTime(false)}>
+            <Text style={{ color: c.text, fontSize: 20, fontWeight: "600" }}>
+              Reminder time
+            </Text>
+            <Text style={{ color: c.muted, marginVertical: 10 }}>
+              {prefs.timezone.replaceAll("_", " ")}
+            </Text>
+            {Array.from({ length: 24 }, (_, hour) => (
+              <SelectionRow
+                key={hour}
+                label={`${String(hour).padStart(2, "0")}:00`}
+                selected={prefs.reminderHour === hour}
+                onPress={() => {
+                  prefs.update({ reminderHour: hour });
+                  setShowTime(false);
+                }}
+              />
             ))}
-          </View>
+            <Button
+              title="Cancel"
+              variant="secondary"
+              onPress={() => setShowTime(false)}
+            />
+          </BottomSheet>
         </>
       ) : null}
       {section === "appearance" ? (
@@ -413,36 +481,51 @@ export default function Settings() {
             prefs.timezoneMode === "automatic",
           )}
           <Text style={{ color: c.muted, marginBottom: 12 }}>
-            Selected: {prefs.timezone.replaceAll("_", " ")}. Select a city below
-            for a manual override.
+            Selected: {prefs.timezone.replaceAll("_", " ")} (
+            {timezoneOffset(prefs.timezone)}). Select a city below for a manual
+            override.
           </Text>
           <Input
             label="Find a timezone"
             value={search}
-            onChangeText={setSearch}
+            onChangeText={(text) => {
+              setSearch(text);
+              setZoneLimit(50);
+            }}
             placeholder="Search city or region"
             autoCapitalize="none"
           />
-          {supported
-            .filter((value) =>
-              value.toLowerCase().includes(search.trim().toLowerCase()),
-            )
-            .slice(0, 40)
-            .map((value) =>
-              row(
-                value.replaceAll("_", " "),
-                new Intl.DateTimeFormat("en", {
-                  timeZone: value,
-                  timeZoneName: "shortOffset",
-                })
-                  .formatToParts(new Date())
-                  .find((p) => p.type === "timeZoneName")?.value ?? "",
-                () => {
-                  prefs.update({ timezone: value, timezoneMode: "manual" });
-                },
-                prefs.timezone === value,
-              ),
-            )}
+          {matches.slice(0, zoneLimit).map((value) =>
+            row(
+              value.replaceAll("_", " "),
+              timezoneOffset(value),
+              () => {
+                try {
+                  new Intl.DateTimeFormat("en", { timeZone: value }).format();
+                } catch {
+                  setError(
+                    "This timezone is unavailable on your device. Choose a nearby city with the same timezone.",
+                  );
+                  return;
+                }
+                setError("");
+                prefs.update({ timezone: value, timezoneMode: "manual" });
+              },
+              prefs.timezoneMode === "manual" && prefs.timezone === value,
+            ),
+          )}
+          {!matches.length ? (
+            <Text style={{ color: c.muted }}>
+              No matching timezones. Try a city or region.
+            </Text>
+          ) : null}
+          {matches.length > zoneLimit ? (
+            <Button
+              title="Show more timezones"
+              variant="secondary"
+              onPress={() => setZoneLimit((n) => n + 50)}
+            />
+          ) : null}
         </View>
       ) : null}
       {section === "about" ? (

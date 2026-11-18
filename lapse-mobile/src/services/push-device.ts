@@ -2,7 +2,7 @@ import * as Crypto from "expo-crypto";
 import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { isDevice } from "expo-device";
-import { api, getSession, ApiError } from "./api";
+import { api, getSession, notificationRequest, ApiError } from "./api";
 import { readLocal, writeLocal, bounded } from "@/utils/local";
 import { Notifications } from "./notifications";
 export async function installationId() {
@@ -84,49 +84,20 @@ export async function sendTestPush() {
   );
   if (!origin.startsWith("https://"))
     throw new Error("Remote push test endpoint is not configured.");
-  const accessToken = getSession()?.accessToken;
-  if (!accessToken) throw new Error("Sign in before testing push.");
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const request = fetch(`${origin}/functions/v1/notifications`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        action: "test",
+    return await notificationRequest<{ message?: string; state?: string }>(
+      "test",
+      {
         deviceId: await installationId(),
         requestId: Crypto.randomUUID(),
-      }),
-    }).then(async (response) => {
-      const data = (await response.json()) as {
-        message?: string;
-        state?: string;
-      };
-      if (!response.ok)
-        throw new ApiError(
-          data.message ?? "Remote push test failed",
-          response.status,
-        );
-      return data;
-    });
-    return await Promise.race([
-      request,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          controller.abort();
-          reject(
-            new Error(
-              "Push test timed out. Its delivery result is unknown; check your device before trying again.",
-            ),
-          );
-        }, 25000);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
+      },
+      25000,
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 0)
+      throw new Error(
+        "The test result is unknown. Check your device before trying again.",
+      );
+    throw error;
   }
 }

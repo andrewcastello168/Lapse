@@ -193,7 +193,7 @@ export default function AddFlow() {
                   setMasters([]);
                 }}
                 style={({ pressed }) => ({
-                  width: "48%",
+                  flexBasis: "45%",
                   flexGrow: 1,
                   minHeight: 86,
                   borderRadius: 17,

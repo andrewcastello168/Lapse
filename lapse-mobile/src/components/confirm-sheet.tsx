@@ -1,4 +1,4 @@
-import { Modal, View } from "react-native";
+import { BottomSheet } from "./bottom-sheet";
 import { Text } from "@/components/typography";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui";
@@ -28,67 +28,43 @@ export function ConfirmSheet({
 }) {
   const c = useThemeColors();
   return (
-    <Modal
+    <BottomSheet
       visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={() => {
+      onClose={() => {
         if (!busy) onCancel();
       }}
     >
-      <View
+      <Text
         style={{
-          flex: 1,
-          backgroundColor: "rgba(0,0,0,.38)",
-          justifyContent: "flex-end",
+          color: c.text,
+          fontSize: 23,
+          fontWeight: "700",
+          marginBottom: 16,
         }}
       >
-        <View
-          accessibilityViewIsModal
-          style={{
-            backgroundColor: c.bg,
-            borderTopLeftRadius: 26,
-            borderTopRightRadius: 26,
-            padding: 26,
-            paddingBottom: 42,
-            maxWidth: 640,
-            width: "100%",
-            alignSelf: "center",
-          }}
+        {title}
+      </Text>
+      {children}
+      {error ? (
+        <Text
+          accessibilityRole="alert"
+          style={{ color: c.danger, lineHeight: 21, marginBottom: 16 }}
         >
-          <Text
-            style={{
-              color: c.text,
-              fontSize: 23,
-              fontWeight: "700",
-              marginBottom: 16,
-            }}
-          >
-            {title}
-          </Text>
-          {children}
-          {error ? (
-            <Text
-              accessibilityRole="alert"
-              style={{ color: c.danger, lineHeight: 21, marginBottom: 16 }}
-            >
-              {error}
-            </Text>
-          ) : null}
-          <Button
-            title={busy ? "Please wait…" : confirm}
-            variant={danger ? "danger" : "primary"}
-            disabled={busy || disabled}
-            onPress={onConfirm}
-          />
-          <Button
-            title="Cancel"
-            variant="secondary"
-            disabled={busy}
-            onPress={onCancel}
-          />
-        </View>
-      </View>
-    </Modal>
+          {error}
+        </Text>
+      ) : null}
+      <Button
+        title={busy ? "Please wait…" : confirm}
+        variant={danger ? "danger" : "primary"}
+        disabled={busy || disabled}
+        onPress={onConfirm}
+      />
+      <Button
+        title="Cancel"
+        variant="secondary"
+        disabled={busy}
+        onPress={onCancel}
+      />
+    </BottomSheet>
   );
 }

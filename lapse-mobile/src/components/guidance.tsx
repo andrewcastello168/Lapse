@@ -14,6 +14,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { usePathname, useLocalSearchParams } from "expo-router";
 import { Text } from "./typography";
 import { usePreferences } from "@/context/preferences";
@@ -81,6 +82,7 @@ export function GuideTarget({
   );
 }
 export function Guidance({ children }: { children: ReactNode }) {
+  const insets = useSafeAreaInsets();
   const path = usePathname(),
     { user } = useAuth(),
     { colors: c } = usePreferences();
@@ -187,6 +189,8 @@ export function Guidance({ children }: { children: ReactNode }) {
           transparent
           animationType="none"
           onRequestClose={close}
+          statusBarTranslucent
+          navigationBarTranslucent
         >
           <View
             style={{
@@ -210,14 +214,17 @@ export function Guidance({ children }: { children: ReactNode }) {
                 }}
               />
             ) : null}
-            <View
+            <ScrollView
               accessibilityViewIsModal
               style={{
                 backgroundColor: c.surface,
-                padding: 22,
-                paddingBottom: 40,
                 borderRadius: 20,
                 maxHeight: height * 0.65,
+                flexGrow: 0,
+              }}
+              contentContainerStyle={{
+                padding: 22,
+                paddingBottom: Math.max(insets.bottom, 16) + 16,
               }}
             >
               <Text style={{ color: c.text, fontSize: 20, fontWeight: "600" }}>
@@ -254,7 +261,7 @@ export function Guidance({ children }: { children: ReactNode }) {
                 {button("Skip", close)}
                 {button("Close", close)}
               </View>
-            </View>
+            </ScrollView>
           </View>
         </Modal>
       </Registry.Provider>

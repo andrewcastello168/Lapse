@@ -37,7 +37,12 @@ http
       "Content-Type",
       mime[path.extname(file)] || "application/octet-stream",
     );
-    fs.createReadStream(file).pipe(res);
+    const stream = fs.createReadStream(file);
+    stream.on("error", () => {
+      if (!res.headersSent) res.writeHead(404);
+      res.end("Not found");
+    });
+    stream.pipe(res);
   })
   .listen(8082, "127.0.0.1", () =>
     console.log("Phase 2 static test server on 8082"),

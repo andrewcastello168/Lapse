@@ -68,66 +68,73 @@ export default function Welcome() {
               key={index}
               style={{
                 width,
-                justifyContent: "center",
-                alignItems: "center",
-                paddingHorizontal: 12,
               }}
             >
-              {index === 0 ? (
-                <>
-                  <Image
-                    source={require("../../assets/images/branding/logo-mark.png")}
-                    style={{ width: 96, height: 96, marginBottom: 16 }}
-                  />
-                  <Text
+              <ScrollView
+                contentContainerStyle={{
+                  flexGrow: 1,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  paddingHorizontal: 12,
+                  paddingVertical: 16,
+                }}
+              >
+                {index === 0 ? (
+                  <>
+                    <Image
+                      source={require("../../assets/images/branding/logo-mark.png")}
+                      style={{ width: 96, height: 96, marginBottom: 16 }}
+                    />
+                    <Text
+                      style={{
+                        fontSize: 48,
+                        color: c.text,
+                        fontWeight: "700",
+                        marginBottom: 26,
+                      }}
+                    >
+                      lapse.
+                    </Text>
+                  </>
+                ) : (
+                  <View
                     style={{
-                      fontSize: 48,
-                      color: c.text,
-                      fontWeight: "700",
-                      marginBottom: 26,
+                      padding: 25,
+                      backgroundColor: c.accentTint,
+                      borderRadius: 40,
+                      marginBottom: 36,
                     }}
                   >
-                    lapse.
-                  </Text>
-                </>
-              ) : (
-                <View
+                    <CalendarCheck size={100} color={c.accent} />
+                  </View>
+                )}
+                <Text
                   style={{
-                    padding: 25,
-                    backgroundColor: c.accentTint,
-                    borderRadius: 40,
-                    marginBottom: 36,
+                    fontSize: 28,
+                    fontWeight: "600",
+                    lineHeight: 35,
+                    textAlign: "center",
+                    color: c.text,
                   }}
                 >
-                  <CalendarCheck size={100} color={c.accent} />
-                </View>
-              )}
-              <Text
-                style={{
-                  fontSize: 28,
-                  fontWeight: "600",
-                  lineHeight: 35,
-                  textAlign: "center",
-                  color: c.text,
-                }}
-              >
-                {index === 0
-                  ? "Stay ahead of expiration."
-                  : "Never miss a renewal again."}
-              </Text>
-              <Text
-                style={{
-                  color: c.muted,
-                  fontSize: 15,
-                  lineHeight: 24,
-                  textAlign: "center",
-                  marginTop: 16,
-                }}
-              >
-                {index === 0
-                  ? "Track subscriptions, documents, licenses, and more in one place."
-                  : "Get timely reminders for subscriptions, documents, and important deadlines."}
-              </Text>
+                  {index === 0
+                    ? "Stay ahead of expiration."
+                    : "Never miss a renewal again."}
+                </Text>
+                <Text
+                  style={{
+                    color: c.muted,
+                    fontSize: 15,
+                    lineHeight: 24,
+                    textAlign: "center",
+                    marginTop: 16,
+                  }}
+                >
+                  {index === 0
+                    ? "Track subscriptions, documents, licenses, and more in one place."
+                    : "Get timely reminders for subscriptions, documents, and important deadlines."}
+                </Text>
+              </ScrollView>
             </View>
           ))}
         </ScrollView>
